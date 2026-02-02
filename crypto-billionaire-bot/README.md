@@ -1,10 +1,11 @@
 # Crypto Billionaire Bot
 
-Billionaire-level crypto intelligence Telegram bot for personal intraday futures analysis. This is NOT automated trading - it's an intelligence + learning assistant powered by W.D. Gann mathematical principles and real-time market data.
+Billionaire-level crypto intelligence Telegram bot for personal intraday futures analysis. This is NOT automated trading - it's an intelligence + learning assistant powered by W.D. Gann mathematical principles, real-time market data, and planetary timing.
 
 ## Features
 
 - **Gann Analysis Engine**: Square of 9, time cycles, geometric angles, Wheel of 24
+- **Planetary Timing Engine**: Deterministic astronomical calculations with multi-source verification
 - **Multi-Exchange Data**: Bybit V5 + Binance USD-M Futures (public APIs)
 - **Market Radar**: Whole-market breadth, regime scoring, top movers
 - **Learning System**: Analysis snapshots with outcome labeling for model improvement
@@ -14,13 +15,18 @@ Billionaire-level crypto intelligence Telegram bot for personal intraday futures
 ```
 crypto-billionaire-bot/
 ├── config/
-│   └── index.js              # Centralized configuration
+│   ├── index.js              # Centralized configuration
+│   └── constants.js          # Planetary constants, zodiac, aspects, orbs
 ├── modules/
 │   ├── gann.js               # Deterministic Gann analysis engine
+│   ├── planetary.js          # Planetary timing engine (VSOP87)
 │   ├── bybit.js              # Bybit V5 API client
 │   ├── binanceFutures.js     # Binance USD-M Futures client
 │   ├── coingecko.js          # CoinGecko API client
-│   └── marketRadar.js        # Market-wide analysis
+│   ├── marketRadar.js        # Market-wide analysis
+│   └── verifiers/
+│       ├── horizons.js       # JPL Horizons verification
+│       └── prokerala.js      # Prokerala API verification
 ├── database/
 │   ├── schema.sql            # PostgreSQL schema
 │   └── models.js             # Database access layer
@@ -28,7 +34,8 @@ crypto-billionaire-bot/
 │   ├── logger.js             # Structured logging
 │   └── validators.js         # Input validation
 ├── scripts/
-│   └── test-market-data.js   # Market data testing script
+│   ├── test-market-data.js   # Market data testing
+│   └── test-planetary.js     # Planetary engine testing
 ├── server.js                 # Express server entry point
 ├── package.json
 ├── .env.example
@@ -38,7 +45,7 @@ crypto-billionaire-bot/
 ## Prerequisites
 
 - Node.js 18+
-- PostgreSQL 14+ (optional for Part 1-2)
+- PostgreSQL 14+ (optional)
 - CoinGecko Demo API Key (required for market radar)
 
 ## Quick Start
@@ -62,140 +69,119 @@ cp .env.example .env
 COINGECKO_API_KEY=your_demo_api_key  # Get free at coingecko.com/api
 ```
 
-**Optional Variables:**
+**Planetary Verification (Optional):**
 ```env
-DATABASE_URL=postgresql://...        # For persistence
-BYBIT_BASE_URL=https://api.bybit.com
-BINANCE_FUTURES_BASE_URL=https://fapi.binance.com
-TZ=Asia/Kolkata
+HORIZONS_ENABLED=true               # JPL Horizons (free, no key)
+PROKERALA_ENABLED=false             # Prokerala (requires API key)
+PROKERALA_API_KEY=your_key          # If using Prokerala
 ```
 
-### 3. Test Market Data
+### 3. Test Planetary Engine
 
 ```bash
-# Test all market data modules
-node scripts/test-market-data.js
+# Test planetary calculations
+node scripts/test-planetary.js
 ```
 
 ### 4. Start Server
 
 ```bash
-# Development (with auto-reload)
-npm run dev
-
-# Production
-npm start
+npm run dev   # Development
+npm start     # Production
 ```
 
-## Market Data Modules
+## Planetary Engine
 
-### Bybit V5 Client
+The planetary module provides deterministic astronomical calculations using VSOP87 algorithms. No AI - pure celestial mechanics.
+
+### Current Planetary Positions
 
 ```javascript
-const { bybitClient } = require('./modules/bybit');
+const planetary = require('./modules/planetary');
 
-// Get BTCUSDT ticker
-const ticker = await bybitClient.getTickerBySymbol('BTCUSDT');
-console.log('Price:', ticker.lastPrice);
-console.log('24h Change:', ticker.price24hPcnt + '%');
-console.log('Open Interest:', ticker.openInterest);
+// Get all planet positions for current time
+const positions = planetary.getCurrentPlanets();
 
-// Get kline data
-const klines = await bybitClient.getKlineData({
-  symbol: 'BTCUSDT',
-  interval: '15',  // 15 minutes
-  limit: 100
-});
+console.log('Sun:', positions.positions.SUN.formatted);   // "12°♈ 45'"
+console.log('Moon:', positions.positions.MOON.formatted);
+console.log('Mars:', positions.positions.MARS.sign);      // "Taurus"
 
-// Get Open Interest history
-const oi = await bybitClient.getOpenInterest({
-  symbol: 'BTCUSDT',
-  intervalTime: '1h',
-  limit: 24
-});
-
-// Get Long/Short ratio
-const lsRatio = await bybitClient.getLongShortRatio({
-  symbol: 'BTCUSDT',
-  period: '1h',
-  limit: 24
-});
-
-// Get Funding Rate history
-const funding = await bybitClient.getFundingRateHistory({
-  symbol: 'BTCUSDT',
-  limit: 10
-});
+// Specific planets only
+const inner = planetary.getCurrentPlanets(new Date(), ['SUN', 'MOON', 'MERCURY']);
 ```
 
-### Binance Futures Client
+### Planetary Aspects
 
 ```javascript
-const { binanceFuturesClient } = require('./modules/binanceFutures');
+// Get current aspects between classical planets
+const aspects = planetary.getAspects();
 
-// Get 24h ticker
-const ticker = await binanceFuturesClient.get24hTicker({ symbol: 'BTCUSDT' });
+for (const a of aspects.aspects) {
+  console.log(`${a.planet1.name} ${a.aspect.symbol} ${a.planet2.name}`);
+  console.log(`  Orb: ${a.orb}° | Strength: ${a.strength * 100}%`);
+  console.log(`  ${a.isExact ? 'EXACT' : a.isApplying ? 'Applying' : 'Separating'}`);
+}
 
-// Get current Open Interest
-const oi = await binanceFuturesClient.getOpenInterest({ symbol: 'BTCUSDT' });
-
-// Get Global Long/Short Ratio
-const lsRatio = await binanceFuturesClient.getGlobalLongShortRatio({
-  symbol: 'BTCUSDT',
-  period: '1h',
-  limit: 24
-});
-
-// Get Taker Buy/Sell Volume
-const takerVol = await binanceFuturesClient.getTakerBuySellVol({
-  symbol: 'BTCUSDT',
-  period: '1h',
-  limit: 24
-});
-
-// Get klines
-const klines = await binanceFuturesClient.getKlines({
-  symbol: 'BTCUSDT',
-  interval: '1h',
-  limit: 100
+// With options
+const tightAspects = planetary.getAspects(null, {
+  planets: ['JUPITER', 'SATURN', 'URANUS', 'NEPTUNE', 'PLUTO'],
+  orbs: require('./config/constants').TIGHT_ORBS,
+  includeMinor: true
 });
 ```
 
-### CoinGecko Client
+### Moon Information
 
 ```javascript
-const { coinGeckoClient } = require('./modules/coingecko');
+const moonInfo = planetary.getMoonInfo();
 
-// Fetch top coins by volume
-const topCoins = await coinGeckoClient.fetchTopCoins({
-  per_page: 200,
-  order: 'volume_desc'
-});
-
-// Fetch global market data
-const global = await coinGeckoClient.fetchGlobalData();
-console.log('BTC Dominance:', global.btcDominance);
-console.log('Total Market Cap:', global.totalMarketCap);
+console.log('Phase:', moonInfo.phaseSymbol, moonInfo.phase);  // 🌕 Full Moon
+console.log('Sign:', moonInfo.sign);                          // Leo
+console.log('Illumination:', moonInfo.illumination + '%');    // 98.5%
+console.log('Direction:', moonInfo.isWaxing ? 'Waxing' : 'Waning');
 ```
 
-### Market Radar
+### Major Event Scanning
 
 ```javascript
-const { marketRadar } = require('./modules/marketRadar');
+// Scan for major events in next 30 days
+const now = new Date();
+const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
-// Generate market snapshot
-const snapshot = await marketRadar.generateSnapshot({ topCoinsCount: 200 });
+const events = planetary.scanMajorEvents(now, future);
 
-console.log('Regime Score:', snapshot.regimeScore, '/100');
-console.log('Regime:', snapshot.regimeLabel);  // STRONG_BULL, BULL, NEUTRAL, BEAR, STRONG_BEAR
-console.log('Advancers:', snapshot.breadth.advancers);
-console.log('Decliners:', snapshot.breadth.decliners);
-console.log('A/D Ratio:', snapshot.breadth.advancersDeclinerRatio);
-console.log('Median Return:', snapshot.breadth.medianReturn + '%');
-console.log('Top Gainers:', snapshot.leaders.topGainers.slice(0, 5));
-console.log('Top Losers:', snapshot.leaders.topLosers.slice(0, 5));
-console.log('Summary:', snapshot.summary);
+for (const event of events) {
+  console.log(`${event.timestamp}: ${event.type}`);
+  // ingress: Planet enters new sign
+  // new_moon, full_moon: Lunar phases
+  // outer_planet_aspect: Jupiter-Saturn square, etc.
+}
 ```
+
+### Event Verification
+
+Multi-source verification ensures accuracy:
+
+```javascript
+// Verify an event against Horizons + Prokerala
+const event = events[0];
+const verification = await planetary.verifyMajorEvent(event);
+
+console.log('Overall Confidence:', verification.overallConfidence);
+// HIGH (< 0.1° delta), MEDIUM (< 0.5°), LOW (< 2°), FAIL
+
+for (const v of verification.verifications) {
+  console.log(`${v.source}: ${v.status} - ${v.overallConfidence}`);
+}
+```
+
+### Verification Sources
+
+| Source | Type | Key Required | Accuracy |
+|--------|------|--------------|----------|
+| VSOP87 | Primary | No | ±0.01° for inner planets |
+| JPL Horizons | Verification | No | Reference quality |
+| Prokerala | Verification | Yes (free) | Human-facing check |
 
 ## Gann Module Usage
 
@@ -215,35 +201,41 @@ console.log('Convergence Score:', cycles.convergenceScore);
 const angles = gann.analyzeAngles(priceHistory);
 console.log('Trend:', angles.signals.trend);
 
-// Wheel of 24
-const wheel = gann.wheelOf24(45000);
-console.log('Degrees:', wheel.degrees.normalized);
-
-// Price targets
-const targets = gann.calculateTargets(45000, 0.5, 5);
-console.log('Key Levels:', targets.keyLevels);
+// Wheel of 24 with planetary overlay
+const wheel = gann.wheelOf24(45000, planetary.getCurrentPlanets().positions.MARS.longitude);
+console.log('Price-Planet Harmony:', wheel.aspectAnalysis.harmony);
 ```
 
-## API Endpoints
+## Market Data Modules
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | API info |
-| `/health` | GET | Health check with DB status |
-| `/api/gann/demo/:price` | GET | Demo Gann analysis |
+### Bybit V5 Client
 
-## Caching & Rate Limits
+```javascript
+const { bybitClient } = require('./modules/bybit');
 
-All market data modules implement:
-- **Retry Logic**: 3 attempts with exponential backoff
-- **Caching**: TTL per endpoint type (3s-60s)
-- **Normalized Output**: Numbers parsed, timestamps in milliseconds
+const ticker = await bybitClient.getTickerBySymbol('BTCUSDT');
+const oi = await bybitClient.getOpenInterest({ symbol: 'BTCUSDT' });
+const funding = await bybitClient.getFundingRateHistory({ symbol: 'BTCUSDT' });
+```
 
-| Module | Ticker TTL | Historical TTL | Rate Limit |
-|--------|------------|----------------|------------|
-| Bybit | 5s | 60s | 10 req/s |
-| Binance | 5s | 60s | 2400 req/min |
-| CoinGecko | 60s | 120s | 30 req/min |
+### Binance Futures Client
+
+```javascript
+const { binanceFuturesClient } = require('./modules/binanceFutures');
+
+const ticker = await binanceFuturesClient.get24hTicker({ symbol: 'BTCUSDT' });
+const lsRatio = await binanceFuturesClient.getGlobalLongShortRatio({ symbol: 'BTCUSDT' });
+```
+
+### Market Radar
+
+```javascript
+const { marketRadar } = require('./modules/marketRadar');
+
+const snapshot = await marketRadar.generateSnapshot({ topCoinsCount: 200 });
+console.log('Regime:', snapshot.regimeLabel);  // STRONG_BULL, BULL, NEUTRAL, BEAR, STRONG_BEAR
+console.log('Score:', snapshot.regimeScore);   // 0-100
+```
 
 ## Environment Variables
 
@@ -255,20 +247,9 @@ All market data modules implement:
 | `DATABASE_URL` | No* | PostgreSQL connection string |
 | `LOG_LEVEL` | No | Log verbosity (default: info) |
 | `COINGECKO_API_KEY` | **Yes** | CoinGecko Demo API key |
-| `BYBIT_BASE_URL` | No | Bybit API URL |
-| `BINANCE_FUTURES_BASE_URL` | No | Binance Futures API URL |
-
-*Server runs without DB in development for testing
-
-## Railway Deployment
-
-1. Push code to GitHub
-2. Create new Railway project
-3. Add PostgreSQL plugin (optional)
-4. Set environment variables:
-   - `COINGECKO_API_KEY` (required)
-5. Connect GitHub repo
-6. Railway auto-detects Node.js and deploys
+| `HORIZONS_ENABLED` | No | Enable JPL Horizons (default: true) |
+| `PROKERALA_ENABLED` | No | Enable Prokerala (default: false) |
+| `PROKERALA_API_KEY` | No | Prokerala API key (if enabled) |
 
 ## Development
 
@@ -282,27 +263,36 @@ npm run dev
 # Test Gann module
 npm run test:gann
 
+# Test planetary engine
+node scripts/test-planetary.js
+
 # Test market data modules
 node scripts/test-market-data.js
-
-# Run Gann examples
-node modules/gann.js
 ```
 
 ## Parts Roadmap
 
 - **Part 1** ✅: Foundation, schema, Gann engine
 - **Part 2** ✅: Market data (Bybit, Binance, CoinGecko, Market Radar)
-- **Part 3**: Telegram bot, AI analysis, alerts
-- **Part 4**: Learning system, backtesting, optimization
+- **Part 3** ✅: Planetary engine with verification (Horizons, Prokerala)
+- **Part 4**: Telegram bot, AI analysis, alerts
 
 ## Key Principles
 
-1. **Deterministic Core**: Gann module is pure math - no APIs, no AI
-2. **Public APIs Only**: No trading execution, read-only market data
-3. **Caching**: Prevents API spam, respects rate limits
-4. **Learning Ready**: Schema supports feature/outcome tracking
-5. **Railway Compatible**: Designed for easy cloud deployment
+1. **Deterministic Core**: Gann and Planetary modules are pure math - no AI
+2. **Multi-Source Verification**: Cross-check calculations with Horizons/Prokerala
+3. **UTC Storage**: All timestamps stored in UTC, displayed in IST
+4. **Graceful Degradation**: Verifiers fail silently, never crash
+5. **No Trading Execution**: Read-only market intelligence
+
+## Verification Confidence Levels
+
+| Level | Delta (°) | Meaning |
+|-------|-----------|---------|
+| HIGH | < 0.1° | Excellent match, highly reliable |
+| MEDIUM | < 0.5° | Good match, acceptable for timing |
+| LOW | < 2.0° | Marginal match, use with caution |
+| FAIL | > 5.0° | Verification failed, investigate |
 
 ## License
 
