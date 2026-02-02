@@ -1,30 +1,35 @@
 # Crypto Billionaire Bot
 
-Billionaire-level crypto intelligence Telegram bot for personal intraday futures analysis. This is NOT automated trading - it's an intelligence + learning assistant powered by W.D. Gann mathematical principles.
+Billionaire-level crypto intelligence Telegram bot for personal intraday futures analysis. This is NOT automated trading - it's an intelligence + learning assistant powered by W.D. Gann mathematical principles and real-time market data.
 
 ## Features
 
-- **Square of 9 Analysis**: Gann Wheel calculations for support/resistance levels
-- **Time Cycle Analysis**: Detection of major and minor Gann cycles
-- **Geometric Angle Analysis**: 1x1, 2x1, 1x2 angle calculations
-- **Wheel of 24**: Price-to-degree conversion and planetary aspects
-- **Target Calculations**: Multi-method price target convergence
+- **Gann Analysis Engine**: Square of 9, time cycles, geometric angles, Wheel of 24
+- **Multi-Exchange Data**: Bybit V5 + Binance USD-M Futures (public APIs)
+- **Market Radar**: Whole-market breadth, regime scoring, top movers
 - **Learning System**: Analysis snapshots with outcome labeling for model improvement
 
 ## Architecture
 
 ```
 crypto-billionaire-bot/
-├── config/                 # Configuration files
+├── config/
+│   └── index.js              # Centralized configuration
 ├── modules/
-│   └── gann.js            # Deterministic Gann analysis engine (pure math)
+│   ├── gann.js               # Deterministic Gann analysis engine
+│   ├── bybit.js              # Bybit V5 API client
+│   ├── binanceFutures.js     # Binance USD-M Futures client
+│   ├── coingecko.js          # CoinGecko API client
+│   └── marketRadar.js        # Market-wide analysis
 ├── database/
-│   ├── schema.sql         # PostgreSQL schema
-│   └── models.js          # Database access layer
+│   ├── schema.sql            # PostgreSQL schema
+│   └── models.js             # Database access layer
 ├── utils/
-│   ├── logger.js          # Structured logging
-│   └── validators.js      # Input validation
-├── server.js              # Express server entry point
+│   ├── logger.js             # Structured logging
+│   └── validators.js         # Input validation
+├── scripts/
+│   └── test-market-data.js   # Market data testing script
+├── server.js                 # Express server entry point
 ├── package.json
 ├── .env.example
 └── README.md
@@ -33,8 +38,8 @@ crypto-billionaire-bot/
 ## Prerequisites
 
 - Node.js 18+
-- PostgreSQL 14+
-- npm or yarn
+- PostgreSQL 14+ (optional for Part 1-2)
+- CoinGecko Demo API Key (required for market radar)
 
 ## Quick Start
 
@@ -52,14 +57,24 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
-### 3. Setup Database
+**Required Variables:**
+```env
+COINGECKO_API_KEY=your_demo_api_key  # Get free at coingecko.com/api
+```
+
+**Optional Variables:**
+```env
+DATABASE_URL=postgresql://...        # For persistence
+BYBIT_BASE_URL=https://api.bybit.com
+BINANCE_FUTURES_BASE_URL=https://fapi.binance.com
+TZ=Asia/Kolkata
+```
+
+### 3. Test Market Data
 
 ```bash
-# Create PostgreSQL database
-createdb crypto_bot
-
-# Run schema
-psql -d crypto_bot -f database/schema.sql
+# Test all market data modules
+node scripts/test-market-data.js
 ```
 
 ### 4. Start Server
@@ -72,97 +87,141 @@ npm run dev
 npm start
 ```
 
-### 5. Verify Installation
+## Market Data Modules
 
-```bash
-# Health check
-curl http://localhost:3000/health
+### Bybit V5 Client
 
-# Gann demo
-curl http://localhost:3000/api/gann/demo/45000
+```javascript
+const { bybitClient } = require('./modules/bybit');
+
+// Get BTCUSDT ticker
+const ticker = await bybitClient.getTickerBySymbol('BTCUSDT');
+console.log('Price:', ticker.lastPrice);
+console.log('24h Change:', ticker.price24hPcnt + '%');
+console.log('Open Interest:', ticker.openInterest);
+
+// Get kline data
+const klines = await bybitClient.getKlineData({
+  symbol: 'BTCUSDT',
+  interval: '15',  // 15 minutes
+  limit: 100
+});
+
+// Get Open Interest history
+const oi = await bybitClient.getOpenInterest({
+  symbol: 'BTCUSDT',
+  intervalTime: '1h',
+  limit: 24
+});
+
+// Get Long/Short ratio
+const lsRatio = await bybitClient.getLongShortRatio({
+  symbol: 'BTCUSDT',
+  period: '1h',
+  limit: 24
+});
+
+// Get Funding Rate history
+const funding = await bybitClient.getFundingRateHistory({
+  symbol: 'BTCUSDT',
+  limit: 10
+});
+```
+
+### Binance Futures Client
+
+```javascript
+const { binanceFuturesClient } = require('./modules/binanceFutures');
+
+// Get 24h ticker
+const ticker = await binanceFuturesClient.get24hTicker({ symbol: 'BTCUSDT' });
+
+// Get current Open Interest
+const oi = await binanceFuturesClient.getOpenInterest({ symbol: 'BTCUSDT' });
+
+// Get Global Long/Short Ratio
+const lsRatio = await binanceFuturesClient.getGlobalLongShortRatio({
+  symbol: 'BTCUSDT',
+  period: '1h',
+  limit: 24
+});
+
+// Get Taker Buy/Sell Volume
+const takerVol = await binanceFuturesClient.getTakerBuySellVol({
+  symbol: 'BTCUSDT',
+  period: '1h',
+  limit: 24
+});
+
+// Get klines
+const klines = await binanceFuturesClient.getKlines({
+  symbol: 'BTCUSDT',
+  interval: '1h',
+  limit: 100
+});
+```
+
+### CoinGecko Client
+
+```javascript
+const { coinGeckoClient } = require('./modules/coingecko');
+
+// Fetch top coins by volume
+const topCoins = await coinGeckoClient.fetchTopCoins({
+  per_page: 200,
+  order: 'volume_desc'
+});
+
+// Fetch global market data
+const global = await coinGeckoClient.fetchGlobalData();
+console.log('BTC Dominance:', global.btcDominance);
+console.log('Total Market Cap:', global.totalMarketCap);
+```
+
+### Market Radar
+
+```javascript
+const { marketRadar } = require('./modules/marketRadar');
+
+// Generate market snapshot
+const snapshot = await marketRadar.generateSnapshot({ topCoinsCount: 200 });
+
+console.log('Regime Score:', snapshot.regimeScore, '/100');
+console.log('Regime:', snapshot.regimeLabel);  // STRONG_BULL, BULL, NEUTRAL, BEAR, STRONG_BEAR
+console.log('Advancers:', snapshot.breadth.advancers);
+console.log('Decliners:', snapshot.breadth.decliners);
+console.log('A/D Ratio:', snapshot.breadth.advancersDeclinerRatio);
+console.log('Median Return:', snapshot.breadth.medianReturn + '%');
+console.log('Top Gainers:', snapshot.leaders.topGainers.slice(0, 5));
+console.log('Top Losers:', snapshot.leaders.topLosers.slice(0, 5));
+console.log('Summary:', snapshot.summary);
 ```
 
 ## Gann Module Usage
 
-The Gann module is a pure mathematical engine with no external dependencies:
-
-### Square of 9
-
 ```javascript
 const gann = require('./modules/gann');
 
-// Analyze price using Square of 9
-const result = gann.squareOf9(45000);
+// Square of 9 analysis
+const sq9 = gann.squareOf9(45000);
+console.log('Support Levels:', sq9.supportLevels);
+console.log('Resistance Levels:', sq9.resistanceLevels);
 
-console.log('Square Root:', result.squareRoot);           // 212.1320
-console.log('Degree Position:', result.degreePosition);   // Where on the wheel
-console.log('Support Levels:', result.supportLevels);     // 5 levels below
-console.log('Resistance Levels:', result.resistanceLevels); // 5 levels above
-console.log('Near Top of Square:', result.flags.nearTop);
-console.log('Near Cardinal:', result.flags.nearCardinal);
-```
+// Cycle analysis
+const cycles = gann.analyzeCycles(new Date(), historicalEvents);
+console.log('Convergence Score:', cycles.convergenceScore);
 
-### Cycle Analysis
-
-```javascript
-const events = [
-  { event_date: '2024-04-20', event_type: 'halving', significance: 10 },
-  { event_date: '2024-03-14', event_type: 'ath', significance: 8 },
-];
-
-const cycles = gann.analyzeCycles(new Date(), events);
-
-console.log('Major Hits:', cycles.majorHits);             // Cycles hitting now
-console.log('Convergence:', cycles.convergenceScore);     // 0-1 score
-console.log('Bias:', cycles.cycleBias);                   // bullish/bearish/neutral
-console.log('Upcoming:', cycles.upcomingCycles);          // Next 30 days
-```
-
-### Angle Analysis
-
-```javascript
-const priceHistory = [
-  { timestamp: new Date(Date.now() - 24*60*60*1000), close_price: 44000 },
-  { timestamp: new Date(Date.now() - 12*60*60*1000), close_price: 44500 },
-  { timestamp: new Date(), close_price: 45000 },
-];
-
+// Angle analysis
 const angles = gann.analyzeAngles(priceHistory);
+console.log('Trend:', angles.signals.trend);
 
-console.log('Angle:', angles.angle.degrees);              // Current trend angle
-console.log('Nearest Gann Angle:', angles.angle.nearestGannAngle.name);
-console.log('Above 1x1:', angles.signals.aboveAngle);
-console.log('Trend Strength:', angles.signals.trendStrength);
-```
-
-### Wheel of 24
-
-```javascript
-// Basic price-to-degrees conversion
+// Wheel of 24
 const wheel = gann.wheelOf24(45000);
-
 console.log('Degrees:', wheel.degrees.normalized);
-console.log('Near Cardinal:', wheel.cardinalAnalysis.nearCardinal);
-console.log('Cardinal Prices:', wheel.cardinalAnalysis.cardinalPrices);
 
-// With planetary aspect analysis
-const wheelWithPlanet = gann.wheelOf24(45000, 120); // Sun at 120°
-
-if (wheelWithPlanet.aspectAnalysis.hasAspect) {
-  console.log('Aspect:', wheelWithPlanet.aspectAnalysis.aspects[0].aspect);
-  console.log('Harmony:', wheelWithPlanet.aspectAnalysis.harmony);
-}
-```
-
-### Price Targets
-
-```javascript
-// Calculate targets within 0.5% to 5% range
+// Price targets
 const targets = gann.calculateTargets(45000, 0.5, 5);
-
-console.log('Closest Support:', targets.closestSupport);
-console.log('Closest Resistance:', targets.closestResistance);
-console.log('Key Levels:', targets.keyLevels); // Where multiple methods agree
+console.log('Key Levels:', targets.keyLevels);
 ```
 
 ## API Endpoints
@@ -171,35 +230,20 @@ console.log('Key Levels:', targets.keyLevels); // Where multiple methods agree
 |----------|--------|-------------|
 | `/` | GET | API info |
 | `/health` | GET | Health check with DB status |
-| `/api/gann/demo/:price` | GET | Demo Gann analysis for a price |
+| `/api/gann/demo/:price` | GET | Demo Gann analysis |
 
-## Database Tables
+## Caching & Rate Limits
 
-### Core Tables
-- `historical_events` - Significant market events for cycle analysis
-- `predictions` - System predictions with outcomes
-- `daily_briefings` - Daily intelligence reports
-- `weekly_war_rooms` - Weekly deep analysis
-- `price_history` - Price data from various sources
-- `user_settings` - Telegram user preferences
+All market data modules implement:
+- **Retry Logic**: 3 attempts with exponential backoff
+- **Caching**: TTL per endpoint type (3s-60s)
+- **Normalized Output**: Numbers parsed, timestamps in milliseconds
 
-### Learning Tables
-- `analysis_snapshots` - Feature snapshots at points in time
-- `outcome_labels` - Actual results after 1h/4h/24h
-- `weight_versions` - Model weights for scoring
-
-## Timezone Handling
-
-- **Storage**: All timestamps stored in UTC
-- **Display**: Converted to Asia/Kolkata (IST) for user display
-
-```javascript
-const logger = require('./utils/logger');
-
-// Convert UTC to IST for display
-const istTime = logger.toIST(new Date());
-console.log(istTime); // "01/02/2026, 14:30:45 IST"
-```
+| Module | Ticker TTL | Historical TTL | Rate Limit |
+|--------|------------|----------------|------------|
+| Bybit | 5s | 60s | 10 req/s |
+| Binance | 5s | 60s | 2400 req/min |
+| CoinGecko | 60s | 120s | 30 req/min |
 
 ## Environment Variables
 
@@ -207,8 +251,12 @@ console.log(istTime); // "01/02/2026, 14:30:45 IST"
 |----------|----------|-------------|
 | `PORT` | No | Server port (default: 3000) |
 | `NODE_ENV` | No | Environment (default: development) |
-| `DATABASE_URL` | Yes* | PostgreSQL connection string |
+| `TZ` | No | Display timezone (default: Asia/Kolkata) |
+| `DATABASE_URL` | No* | PostgreSQL connection string |
 | `LOG_LEVEL` | No | Log verbosity (default: info) |
+| `COINGECKO_API_KEY` | **Yes** | CoinGecko Demo API key |
+| `BYBIT_BASE_URL` | No | Bybit API URL |
+| `BINANCE_FUTURES_BASE_URL` | No | Binance Futures API URL |
 
 *Server runs without DB in development for testing
 
@@ -216,11 +264,11 @@ console.log(istTime); // "01/02/2026, 14:30:45 IST"
 
 1. Push code to GitHub
 2. Create new Railway project
-3. Add PostgreSQL plugin
-4. Connect GitHub repo
-5. Railway auto-detects Node.js and deploys
-
-The `DATABASE_URL` is automatically provided by Railway.
+3. Add PostgreSQL plugin (optional)
+4. Set environment variables:
+   - `COINGECKO_API_KEY` (required)
+5. Connect GitHub repo
+6. Railway auto-detects Node.js and deploys
 
 ## Development
 
@@ -231,26 +279,30 @@ npm install
 # Run with auto-reload
 npm run dev
 
-# Test Gann module directly
+# Test Gann module
 npm run test:gann
 
-# Or run examples
+# Test market data modules
+node scripts/test-market-data.js
+
+# Run Gann examples
 node modules/gann.js
 ```
 
 ## Parts Roadmap
 
-- **Part 1** (Current): Foundation, schema, Gann engine
-- **Part 2**: Telegram bot, Binance integration, price feeds
-- **Part 3**: AI analysis, composite scoring, alerts
+- **Part 1** ✅: Foundation, schema, Gann engine
+- **Part 2** ✅: Market data (Bybit, Binance, CoinGecko, Market Radar)
+- **Part 3**: Telegram bot, AI analysis, alerts
 - **Part 4**: Learning system, backtesting, optimization
 
 ## Key Principles
 
-1. **Deterministic Core**: Gann module is pure math - no APIs, no AI, no external calls
-2. **No Hallucination**: Every output is mathematically derived from inputs
-3. **Learning Ready**: Schema supports feature/outcome tracking for improvement
-4. **Railway Compatible**: Designed for easy cloud deployment
+1. **Deterministic Core**: Gann module is pure math - no APIs, no AI
+2. **Public APIs Only**: No trading execution, read-only market data
+3. **Caching**: Prevents API spam, respects rate limits
+4. **Learning Ready**: Schema supports feature/outcome tracking
+5. **Railway Compatible**: Designed for easy cloud deployment
 
 ## License
 

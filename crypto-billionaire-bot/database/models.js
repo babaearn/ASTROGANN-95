@@ -259,6 +259,78 @@ async function insertAnalysisSnapshot(features, meta, options = {}) {
 }
 
 /**
+ * Insert a market radar snapshot into analysis_snapshots
+ * @param {Object} radarOutput - Output from marketRadar.generateSnapshot()
+ * @param {Object} meta - Additional metadata
+ * @returns {Promise<Object>}
+ */
+async function insertMarketRadarSnapshot(radarOutput, meta = {}) {
+  if (!radarOutput || typeof radarOutput !== 'object') {
+    throw new Error('radarOutput must be a valid object');
+  }
+
+  // Build features from radar output
+  const features = {
+    type: 'market_radar',
+    breadth: radarOutput.breadth,
+    leaders: {
+      topGainers: radarOutput.leaders?.topGainers?.slice(0, 10) || [],
+      topLosers: radarOutput.leaders?.topLosers?.slice(0, 10) || [],
+      volumeConcentration: radarOutput.leaders?.volumeConcentration,
+      totalVolume: radarOutput.leaders?.totalVolume
+    },
+    regimeScore: radarOutput.regimeScore,
+    regimeLabel: radarOutput.regimeLabel,
+    global: radarOutput.global,
+    summary: radarOutput.summary
+  };
+
+  // Build meta with defaults
+  const snapshotMeta = {
+    timeframe: 'market_wide',
+    universe: 'crypto',
+    symbol_scope: 'multi',
+    source: 'coingecko',
+    coinsAnalyzed: radarOutput.meta?.coinsAnalyzed,
+    liquidCoins: radarOutput.meta?.liquidCoins,
+    ...meta
+  };
+
+  // Use BTC price from global data or top gainer/loser as reference
+  const btcData = radarOutput.leaders?.topByVolume?.find(c => c.symbol === 'BTC');
+  const referencePrice = btcData?.price || radarOutput.global?.btcDominance || 0;
+
+  const query = `
+    INSERT INTO analysis_snapshots
+      (snapshot_time, symbol, price_at_snapshot, features, meta, tags)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id, snapshot_time, symbol, price_at_snapshot
+  `;
+
+  try {
+    const result = await getPool().query(query, [
+      new Date(radarOutput.timestamp || Date.now()),
+      'MARKET',  // Special symbol for market-wide snapshots
+      referencePrice,
+      JSON.stringify(features),
+      JSON.stringify(snapshotMeta),
+      JSON.stringify(['market_radar', radarOutput.regimeLabel?.toLowerCase() || 'unknown'])
+    ]);
+
+    logger.info('Market radar snapshot inserted', {
+      id: result.rows[0].id,
+      regimeScore: radarOutput.regimeScore,
+      regimeLabel: radarOutput.regimeLabel
+    });
+
+    return result.rows[0];
+  } catch (error) {
+    logger.error('Failed to insert market radar snapshot', { error: error.message });
+    throw error;
+  }
+}
+
+/**
  * Get analysis snapshots with filters
  * @param {Object} filters - Query filters
  * @returns {Promise<Array>}
@@ -897,6 +969,7 @@ module.exports = {
 
   // Analysis snapshots
   insertAnalysisSnapshot,
+  insertMarketRadarSnapshot,
   getAnalysisSnapshots,
 
   // Outcome labels
