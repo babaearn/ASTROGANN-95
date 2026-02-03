@@ -1,11 +1,11 @@
+# Nixpacks configuration for Railway
+providers = ["node"]
+
 [phases.setup]
-nixPkgs = ["nodejs_20"]
+nixPkgs = ["nodejs_20", "npm"]
 
 [phases.install]
-cmds = ["cd crypto-billionaire-bot && npm ci"]
-
-[phases.build]
-cmds = ["cd crypto-billionaire-bot && npm run build --if-present"]
+cmds = ["cd crypto-billionaire-bot && npm ci --legacy-peer-deps"]
 
 [start]
 cmd = "cd crypto-billionaire-bot && npm start"
