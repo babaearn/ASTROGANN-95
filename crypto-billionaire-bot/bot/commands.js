@@ -32,12 +32,12 @@ async function getCurrentPrice() {
   // Try Bybit first
   if (bybit) {
     try {
-      const ticker = await bybit.getTicker('BTCUSDT');
+      const ticker = await bybit.bybitClient.getTickerBySymbol('BTCUSDT', 'linear');
       if (ticker?.lastPrice) {
         return {
           price: parseFloat(ticker.lastPrice),
           source: 'bybit',
-          change24h: parseFloat(ticker.price24hPcnt || 0) * 100
+          change24h: parseFloat(ticker.price24hPcnt || 0)
         };
       }
     } catch (e) {
@@ -48,12 +48,13 @@ async function getCurrentPrice() {
   // Try CoinGecko
   if (coingecko) {
     try {
-      const data = await coingecko.getCoinPrice('bitcoin');
-      if (data?.bitcoin) {
+      const data = await coingecko.coinGeckoClient.fetchTopCoins({ per_page: 1, order: 'market_cap_desc' });
+      const btc = data.coins?.find(c => c.symbol === 'BTC');
+      if (btc) {
         return {
-          price: data.bitcoin.usd,
+          price: btc.price,
           source: 'coingecko',
-          change24h: data.bitcoin.usd_24h_change || 0
+          change24h: btc.price_change_percentage_24h || 0
         };
       }
     } catch (e) {
