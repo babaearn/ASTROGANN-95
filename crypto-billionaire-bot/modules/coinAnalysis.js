@@ -620,7 +620,7 @@ async function analyzeCoin(symbolInput) {
           section: wheel24.wheelPosition.section,
           description: wheel24.wheelPosition.description,
           nearCardinal: wheel24.cardinalAnalysis.nearCardinal,
-          cardinalDistance: wheel24.cardinalAnalysis.cardinalProximity?.distance
+          cardinalDistance: wheel24.cardinalAnalysis.degreesToNearest
         },
         targets: {
           closestSupport: targets.closestSupport,
