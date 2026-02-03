@@ -954,6 +954,356 @@ async function getDailyBriefing(date) {
   }
 }
 
+// ============================================================
+// PART 4: ADDITIONAL FUNCTIONS
+// ============================================================
+
+/**
+ * Get current weights for confluence scoring
+ * @returns {Promise<Object>}
+ */
+async function getCurrentWeights() {
+  try {
+    const result = await getLatestWeights();
+    return result.weights || DEFAULT_WEIGHTS;
+  } catch (error) {
+    logger.debug('Using default weights', { error: error.message });
+    return DEFAULT_WEIGHTS;
+  }
+}
+
+/**
+ * Save new weight version with optional version string
+ * @param {Object} weights
+ * @param {string} version
+ * @returns {Promise<boolean>}
+ */
+async function saveWeightVersion(weights, version = null) {
+  try {
+    await saveWeights(weights, version || `Calibration ${new Date().toISOString()}`, {
+      activateImmediately: true
+    });
+    return true;
+  } catch (error) {
+    logger.error('Failed to save weight version', { error: error.message });
+    return false;
+  }
+}
+
+/**
+ * Get price history for N days
+ * @param {string} symbol
+ * @param {number} days
+ * @param {Date} fromDate
+ * @returns {Promise<Array>}
+ */
+async function getPriceHistory(symbol = 'BTCUSDT', days = 7, fromDate = null) {
+  const startDate = fromDate || new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const query = `
+    SELECT * FROM price_history
+    WHERE symbol = $1 AND timestamp >= $2
+    ORDER BY timestamp ASC
+    LIMIT 1000
+  `;
+
+  try {
+    const p = getPool();
+    if (!p) return [];
+    const result = await p.query(query, [symbol, startDate]);
+    return result.rows;
+  } catch (error) {
+    logger.debug('Failed to get price history', { error: error.message });
+    return [];
+  }
+}
+
+/**
+ * Insert analysis snapshot (simplified for Part 4)
+ * @param {Object} data
+ * @returns {Promise<Object>}
+ */
+async function insertAnalysisSnapshotSimple(data) {
+  const {
+    symbol = 'BTCUSDT',
+    price,
+    snapshot_type = 'analysis',
+    confluence_score = null,
+    bias = null,
+    gann_data = null,
+    planetary_data = null,
+    cycle_data = null,
+    market_data = null,
+    weights_used = null,
+    alert_type = null,
+    alert_trigger = null
+  } = data;
+
+  const features = {
+    price,
+    snapshot_type,
+    confluence_score,
+    bias,
+    gann_data,
+    planetary_data,
+    cycle_data,
+    market_data,
+    alert_type,
+    alert_trigger
+  };
+
+  const meta = {
+    type: snapshot_type,
+    weights_used
+  };
+
+  try {
+    return await insertAnalysisSnapshot(features, meta, {
+      symbol,
+      priceAtSnapshot: price
+    });
+  } catch (error) {
+    logger.debug('Failed to insert snapshot', { error: error.message });
+    return null;
+  }
+}
+
+/**
+ * Get unlabeled snapshots for outcome labeling
+ * @param {string} symbol
+ * @param {number} windowHours
+ * @returns {Promise<Array>}
+ */
+async function getUnlabeledSnapshots(symbol = 'BTCUSDT', windowHours = 24) {
+  const windowMs = windowHours * 60 * 60 * 1000;
+  const cutoffTime = new Date(Date.now() - windowMs);
+
+  // Get snapshots older than windowHours that don't have outcome labels
+  const query = `
+    SELECT s.* FROM analysis_snapshots s
+    LEFT JOIN outcome_labels o ON s.id = o.snapshot_id AND o.horizon = $3
+    WHERE s.symbol = $1
+      AND s.snapshot_time <= $2
+      AND o.id IS NULL
+    ORDER BY s.snapshot_time DESC
+    LIMIT 100
+  `;
+
+  try {
+    const p = getPool();
+    if (!p) return [];
+    const result = await p.query(query, [symbol, cutoffTime, `${windowHours}h`]);
+    return result.rows.map(row => ({
+      id: row.id,
+      created_at: row.snapshot_time,
+      price: row.price_at_snapshot,
+      confluence_score: row.features?.confluence_score,
+      bias: row.features?.bias,
+      detailed_scores: row.features?.detailed_scores
+    }));
+  } catch (error) {
+    logger.debug('Failed to get unlabeled snapshots', { error: error.message });
+    return [];
+  }
+}
+
+/**
+ * Insert outcome label
+ * @param {Object} data
+ * @returns {Promise<Object>}
+ */
+async function insertOutcomeLabel(data) {
+  const {
+    snapshot_id,
+    symbol = 'BTCUSDT',
+    window_hours,
+    prediction_price,
+    actual_price,
+    predicted_bias,
+    actual_return,
+    hit_1h = null,
+    hit_4h = null,
+    hit_24h = null,
+    confluence_score = null
+  } = data;
+
+  // Use the existing function format
+  const horizon = `${window_hours}h`;
+  const labels = [{
+    horizon,
+    horizonEndTime: new Date(),
+    priceAtHorizon: actual_price,
+    returnsPercent: actual_return,
+    directionActual: actual_return >= 0 ? 'up' : 'down'
+  }];
+
+  try {
+    return await insertOutcomeLabels(snapshot_id, labels);
+  } catch (error) {
+    logger.debug('Failed to insert outcome label', { error: error.message });
+    return null;
+  }
+}
+
+/**
+ * Get outcome labels for calibration
+ * @param {string} symbol
+ * @param {number} days
+ * @returns {Promise<Array>}
+ */
+async function getOutcomeLabelsForCalibration(symbol = 'BTCUSDT', days = 7) {
+  const startDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+
+  const query = `
+    SELECT
+      o.*,
+      s.features,
+      s.price_at_snapshot as prediction_price
+    FROM outcome_labels o
+    JOIN analysis_snapshots s ON o.snapshot_id = s.id
+    WHERE s.symbol = $1 AND o.labeled_at >= $2
+    ORDER BY o.labeled_at DESC
+  `;
+
+  try {
+    const p = getPool();
+    if (!p) return [];
+    const result = await p.query(query, [symbol, startDate]);
+    return result.rows.map(row => ({
+      ...row,
+      predicted_bias: row.features?.bias,
+      actual_return: row.returns_percent,
+      hit_1h: row.horizon === '1h' ? row.returns_percent >= 0.5 : null,
+      hit_4h: row.horizon === '4h' ? row.returns_percent >= 0.5 : null,
+      hit_24h: row.horizon === '24h' ? row.returns_percent >= 0.5 : null
+    }));
+  } catch (error) {
+    logger.debug('Failed to get outcome labels', { error: error.message });
+    return [];
+  }
+}
+
+/**
+ * Get outcome labels with snapshots for calibration
+ * @param {string} symbol
+ * @param {number} days
+ * @returns {Promise<Array>}
+ */
+async function getOutcomeLabelsWithSnapshots(symbol = 'BTCUSDT', days = 14) {
+  return getOutcomeLabelsForCalibration(symbol, days);
+}
+
+/**
+ * Insert daily briefing (simplified)
+ * @param {Object} data
+ * @returns {Promise<Object>}
+ */
+async function insertDailyBriefing(data) {
+  const {
+    briefing_date,
+    symbol = 'BTCUSDT',
+    price_at_briefing,
+    confluence_score,
+    bias,
+    gann_summary,
+    planetary_summary,
+    full_briefing
+  } = data;
+
+  return upsertDailyBriefing({
+    briefingDate: briefing_date,
+    symbol,
+    openPrice: price_at_briefing,
+    gannAnalysis: gann_summary,
+    cycleAnalysis: full_briefing?.cycles,
+    keyLevels: full_briefing?.gann?.targets?.keyLevels,
+    marketBias: bias,
+    summary: JSON.stringify(full_briefing)
+  });
+}
+
+/**
+ * Insert weekly war room
+ * @param {Object} data
+ * @returns {Promise<Object>}
+ */
+async function insertWeeklyWarRoom(data) {
+  const {
+    week_start,
+    week_end,
+    symbol = 'BTCUSDT',
+    week_open,
+    week_close,
+    week_return,
+    cycle_summary,
+    planetary_summary,
+    performance_metrics,
+    full_analysis
+  } = data;
+
+  const query = `
+    INSERT INTO weekly_war_rooms
+      (week_start, week_end, symbol, week_open, week_close, week_return,
+       cycle_summary, planetary_summary, performance_metrics, full_analysis)
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    RETURNING *
+  `;
+
+  try {
+    const p = getPool();
+    if (!p) return null;
+    const result = await p.query(query, [
+      week_start, week_end, symbol, week_open, week_close, week_return,
+      JSON.stringify(cycle_summary),
+      JSON.stringify(planetary_summary),
+      JSON.stringify(performance_metrics),
+      JSON.stringify(full_analysis)
+    ]);
+    logger.info('Weekly war room inserted', { id: result.rows[0]?.id });
+    return result.rows[0];
+  } catch (error) {
+    logger.debug('Failed to insert weekly war room', { error: error.message });
+    return null;
+  }
+}
+
+/**
+ * Save calibration record
+ * @param {Object} data
+ * @returns {Promise<Object>}
+ */
+async function saveCalibrationRecord(data) {
+  const {
+    calibration_date,
+    version,
+    samples_used,
+    previous_weights,
+    new_weights,
+    adjustments,
+    performance_metrics
+  } = data;
+
+  // Store as a weight version with metadata
+  try {
+    return await saveWeights(new_weights, `Calibration ${version}`, {
+      performanceMetrics: {
+        calibration_date,
+        samples_used,
+        previous_weights,
+        adjustments,
+        ...performance_metrics
+      },
+      activateImmediately: true
+    });
+  } catch (error) {
+    logger.debug('Failed to save calibration record', { error: error.message });
+    return null;
+  }
+}
+
+// Alias for backwards compatibility
+const getOutcomeLabelsFromDb = getOutcomeLabelsForCalibration;
+
 // Export all functions
 module.exports = {
   // Core
@@ -966,20 +1316,27 @@ module.exports = {
   insertPricePoint,
   getRecentPriceHistory,
   getPriceAt,
+  getPriceHistory,
 
   // Analysis snapshots
-  insertAnalysisSnapshot,
+  insertAnalysisSnapshot: insertAnalysisSnapshotSimple,
   insertMarketRadarSnapshot,
   getAnalysisSnapshots,
+  getUnlabeledSnapshots,
 
   // Outcome labels
   insertOutcomeLabels,
-  getOutcomeLabels,
+  getOutcomeLabels: getOutcomeLabelsFromDb,
+  insertOutcomeLabel,
+  getOutcomeLabelsForCalibration,
+  getOutcomeLabelsWithSnapshots,
 
   // Weights
   getLatestWeights,
   saveWeights,
   activateWeights,
+  getCurrentWeights,
+  saveWeightVersion,
 
   // User settings
   upsertUserSettings,
@@ -996,5 +1353,12 @@ module.exports = {
 
   // Daily briefings
   upsertDailyBriefing,
-  getDailyBriefing
+  getDailyBriefing,
+  insertDailyBriefing,
+
+  // Weekly war rooms
+  insertWeeklyWarRoom,
+
+  // Calibration
+  saveCalibrationRecord
 };

@@ -1,0 +1,444 @@
+/**
+ * TELEGRAM COMMAND HANDLERS
+ * =========================
+ * All bot command implementations
+ */
+
+const logger = require('../utils/logger');
+const formatters = require('./formatters');
+const gann = require('../modules/gann');
+const planetary = require('../modules/planetary');
+const confluence = require('../modules/confluence');
+const db = require('../database/models');
+
+// Market data modules (may not be available)
+let bybit, coingecko, marketRadar;
+try {
+  bybit = require('../modules/bybit');
+  coingecko = require('../modules/coingecko');
+  marketRadar = require('../modules/marketRadar');
+} catch (e) {
+  logger.warn('Some market modules not available', { error: e.message });
+}
+
+// ============================================================
+// HELPER FUNCTIONS
+// ============================================================
+
+/**
+ * Get current BTC price from available sources
+ */
+async function getCurrentPrice() {
+  // Try Bybit first
+  if (bybit) {
+    try {
+      const ticker = await bybit.getTicker('BTCUSDT');
+      if (ticker?.lastPrice) {
+        return {
+          price: parseFloat(ticker.lastPrice),
+          source: 'bybit',
+          change24h: parseFloat(ticker.price24hPcnt || 0) * 100
+        };
+      }
+    } catch (e) {
+      logger.debug('Bybit price fetch failed', { error: e.message });
+    }
+  }
+
+  // Try CoinGecko
+  if (coingecko) {
+    try {
+      const data = await coingecko.getCoinPrice('bitcoin');
+      if (data?.bitcoin) {
+        return {
+          price: data.bitcoin.usd,
+          source: 'coingecko',
+          change24h: data.bitcoin.usd_24h_change || 0
+        };
+      }
+    } catch (e) {
+      logger.debug('CoinGecko price fetch failed', { error: e.message });
+    }
+  }
+
+  // Return null if no price available
+  return null;
+}
+
+/**
+ * Get historical events for cycle analysis
+ */
+async function getHistoricalEvents() {
+  try {
+    const events = await db.getHistoricalEvents('BTC');
+    if (events && events.length > 0) {
+      return events;
+    }
+  } catch (e) {
+    logger.debug('DB historical events fetch failed', { error: e.message });
+  }
+
+  // Fallback to hardcoded events
+  return [
+    { event_date: '2024-04-20', event_type: 'halving', description: 'BTC Halving 2024', significance: 10 },
+    { event_date: '2024-03-14', event_type: 'ath', description: 'Post-ETF ATH', significance: 8 },
+    { event_date: '2022-11-09', event_type: 'crash', description: 'FTX Collapse', significance: 9 },
+    { event_date: '2021-11-10', event_type: 'ath', description: '2021 Cycle ATH', significance: 9 },
+    { event_date: '2020-05-11', event_type: 'halving', description: 'Third Halving', significance: 10 }
+  ];
+}
+
+// ============================================================
+// COMMAND HANDLERS
+// ============================================================
+
+/**
+ * Handle /start command
+ */
+async function handleStart(bot, msg) {
+  const chatId = msg.chat.id;
+  const username = msg.from?.username || msg.from?.first_name || 'User';
+
+  try {
+    // Save user settings
+    await db.upsertUserSettings(chatId, {
+      username,
+      displayTimezone: 'Asia/Kolkata',
+      preferredSymbols: ['BTCUSDT'],
+      alertPreferences: { daily_briefing: true, level_alerts: true },
+      isActive: true
+    });
+  } catch (e) {
+    logger.debug('Failed to save user settings', { error: e.message });
+  }
+
+  const welcomeMsg = `<b>Welcome to Crypto Billionaire Bot!</b>
+
+Hello ${formatters.escapeHtml(username)}! 👋
+
+I provide institutional-grade crypto intelligence using:
+• W.D. Gann mathematical analysis
+• Planetary timing & cycles
+• Market breadth analysis
+• Confluence scoring
+
+<b>Daily Briefing:</b> 5:30 AM IST
+<b>Weekly War Room:</b> Saturday 6:00 PM IST
+
+Type /help for available commands.
+
+<i>This is for analysis only. Not financial advice.</i>`;
+
+  await bot.sendMessage(chatId, welcomeMsg, { parse_mode: 'HTML' });
+}
+
+/**
+ * Handle /help command
+ */
+async function handleHelp(bot, msg) {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(chatId, formatters.formatHelp(), { parse_mode: 'HTML' });
+}
+
+/**
+ * Handle /status command
+ */
+async function handleStatus(bot, msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const priceData = await getCurrentPrice();
+
+    if (!priceData) {
+      await bot.sendMessage(chatId, '⚠️ Unable to fetch current price. Please try again later.');
+      return;
+    }
+
+    // Get confluence
+    let confluenceData = null;
+    try {
+      confluenceData = await confluence.calculate(priceData.price);
+    } catch (e) {
+      logger.debug('Confluence calculation failed', { error: e.message });
+    }
+
+    // Calculate next briefing time (5:30 AM IST = 00:00 UTC)
+    const now = new Date();
+    const nextBriefing = new Date(now);
+    nextBriefing.setUTCHours(0, 0, 0, 0);
+    if (now.getUTCHours() >= 0) {
+      nextBriefing.setDate(nextBriefing.getDate() + 1);
+    }
+
+    const statusMsg = formatters.formatStatus({
+      price: priceData.price,
+      change24h: priceData.change24h,
+      confluence: confluenceData,
+      nextBriefing,
+      botUptime: process.uptime(),
+      timestamp: new Date()
+    });
+
+    await bot.sendMessage(chatId, statusMsg, { parse_mode: 'HTML' });
+  } catch (error) {
+    logger.error('Status command error', { error: error.message, chatId });
+    await bot.sendMessage(chatId, formatters.formatError(error, '/status'), { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Handle /gann command
+ */
+async function handleGann(bot, msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const priceData = await getCurrentPrice();
+
+    if (!priceData) {
+      await bot.sendMessage(chatId, '⚠️ Unable to fetch current price. Please try again later.');
+      return;
+    }
+
+    const price = priceData.price;
+
+    // Run Gann analyses
+    const sq9 = gann.squareOf9(price);
+    const wheel24 = gann.wheelOf24(price);
+    const targets = gann.calculateTargets(price, 0.5, 5);
+
+    const gannMsg = formatters.formatGann({
+      price,
+      sq9,
+      wheel24,
+      targets,
+      timestamp: new Date()
+    });
+
+    await bot.sendMessage(chatId, gannMsg, { parse_mode: 'HTML' });
+  } catch (error) {
+    logger.error('Gann command error', { error: error.message, chatId });
+    await bot.sendMessage(chatId, formatters.formatError(error, '/gann'), { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Handle /planets command
+ */
+async function handlePlanets(bot, msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const planets = planetary.getCurrentPlanets();
+    const moon = planetary.getMoonInfo();
+    const aspectData = planetary.getAspects();
+    const majorEvents = planetary.scanMajorEvents(null, 7);
+
+    const planetaryMsg = formatters.formatPlanetary({
+      planets,
+      moon,
+      aspects: aspectData.aspects,
+      majorEvents: majorEvents.events,
+      timestamp: new Date()
+    });
+
+    await bot.sendMessage(chatId, planetaryMsg, { parse_mode: 'HTML' });
+  } catch (error) {
+    logger.error('Planets command error', { error: error.message, chatId });
+    await bot.sendMessage(chatId, formatters.formatError(error, '/planets'), { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Handle /confluence command
+ */
+async function handleConfluence(bot, msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const priceData = await getCurrentPrice();
+
+    if (!priceData) {
+      await bot.sendMessage(chatId, '⚠️ Unable to fetch current price. Please try again later.');
+      return;
+    }
+
+    const confluenceData = await confluence.calculate(priceData.price);
+
+    const confMsg = formatters.formatConfluence({
+      price: priceData.price,
+      score: confluenceData.score,
+      bias: confluenceData.bias,
+      components: confluenceData.components,
+      timestamp: new Date()
+    });
+
+    await bot.sendMessage(chatId, confMsg, { parse_mode: 'HTML' });
+  } catch (error) {
+    logger.error('Confluence command error', { error: error.message, chatId });
+    await bot.sendMessage(chatId, formatters.formatError(error, '/confluence'), { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Handle /levels command
+ */
+async function handleLevels(bot, msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const priceData = await getCurrentPrice();
+
+    if (!priceData) {
+      await bot.sendMessage(chatId, '⚠️ Unable to fetch current price. Please try again later.');
+      return;
+    }
+
+    const price = priceData.price;
+    const targets = gann.calculateTargets(price, 0.5, 5);
+
+    let levelsMsg = `<b>🎯 KEY PRICE LEVELS</b>\n`;
+    levelsMsg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
+    levelsMsg += `<b>BTC:</b> ${formatters.formatPrice(price)}\n\n`;
+
+    // Supports
+    levelsMsg += `<b>↓ SUPPORT LEVELS</b>\n`;
+    targets.supports.slice(0, 5).forEach(s => {
+      levelsMsg += `${formatters.formatPrice(s.level)} (${formatters.formatPercent(s.percentFromPrice)}) [${s.source}]\n`;
+    });
+    levelsMsg += '\n';
+
+    // Resistances
+    levelsMsg += `<b>↑ RESISTANCE LEVELS</b>\n`;
+    targets.resistances.slice(0, 5).forEach(r => {
+      levelsMsg += `${formatters.formatPrice(r.level)} (${formatters.formatPercent(r.percentFromPrice)}) [${r.source}]\n`;
+    });
+    levelsMsg += '\n';
+
+    // Key convergence levels
+    if (targets.keyLevels?.length > 0) {
+      levelsMsg += `<b>⭐ CONVERGENCE LEVELS</b>\n`;
+      targets.keyLevels.slice(0, 5).forEach(k => {
+        const arrow = k.direction === 'resistance' ? '↑' : '↓';
+        levelsMsg += `${arrow} ${formatters.formatPrice(k.level)} [${k.sources?.join('+')}] (${k.convergence}x)\n`;
+      });
+    }
+
+    await bot.sendMessage(chatId, levelsMsg, { parse_mode: 'HTML' });
+  } catch (error) {
+    logger.error('Levels command error', { error: error.message, chatId });
+    await bot.sendMessage(chatId, formatters.formatError(error, '/levels'), { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Handle /cycles command
+ */
+async function handleCycles(bot, msg) {
+  const chatId = msg.chat.id;
+
+  try {
+    const events = await getHistoricalEvents();
+    const cycleAnalysis = gann.analyzeCycles(new Date(), events);
+
+    let cyclesMsg = `<b>⏳ CYCLE ANALYSIS</b>\n`;
+    cyclesMsg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
+
+    cyclesMsg += `<b>Convergence:</b> ${(cycleAnalysis.convergenceScore * 100).toFixed(0)}%\n`;
+    cyclesMsg += `<b>Bias:</b> ${cycleAnalysis.cycleBias?.toUpperCase() || 'NEUTRAL'}\n\n`;
+
+    if (cycleAnalysis.majorHits?.length > 0) {
+      cyclesMsg += `<b>🎯 MAJOR CYCLE HITS</b>\n`;
+      cycleAnalysis.majorHits.slice(0, 5).forEach(hit => {
+        cyclesMsg += `• ${hit.cycleLength}d x${hit.multiplier} from ${hit.event?.type || 'event'}\n`;
+        cyclesMsg += `  Strength: ${(hit.strength * 100).toFixed(0)}%\n`;
+      });
+      cyclesMsg += '\n';
+    }
+
+    if (cycleAnalysis.upcomingCycles?.length > 0) {
+      cyclesMsg += `<b>📅 UPCOMING CYCLES</b>\n`;
+      cycleAnalysis.upcomingCycles.slice(0, 5).forEach(up => {
+        const marker = up.isMajor ? '🔴' : '⚪';
+        cyclesMsg += `${marker} ${up.date} (${up.daysUntil}d) - ${up.cycleLength}d cycle\n`;
+      });
+    }
+
+    await bot.sendMessage(chatId, cyclesMsg, { parse_mode: 'HTML' });
+  } catch (error) {
+    logger.error('Cycles command error', { error: error.message, chatId });
+    await bot.sendMessage(chatId, formatters.formatError(error, '/cycles'), { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Handle unknown command
+ */
+async function handleUnknown(bot, msg) {
+  const chatId = msg.chat.id;
+  await bot.sendMessage(
+    chatId,
+    '❓ Unknown command. Type /help for available commands.',
+    { parse_mode: 'HTML' }
+  );
+}
+
+// ============================================================
+// COMMAND REGISTRY
+// ============================================================
+
+const commands = {
+  start: handleStart,
+  help: handleHelp,
+  status: handleStatus,
+  gann: handleGann,
+  planets: handlePlanets,
+  confluence: handleConfluence,
+  levels: handleLevels,
+  cycles: handleCycles
+};
+
+/**
+ * Register all commands with bot
+ */
+function registerCommands(bot) {
+  // Register each command
+  Object.entries(commands).forEach(([command, handler]) => {
+    bot.onText(new RegExp(`^/${command}(@\\w+)?$`, 'i'), (msg) => {
+      handler(bot, msg).catch(error => {
+        logger.error(`Command /${command} failed`, { error: error.message });
+      });
+    });
+  });
+
+  // Handle unknown commands
+  bot.onText(/^\/\w+/, (msg) => {
+    const command = msg.text.split('@')[0].replace('/', '').toLowerCase();
+    if (!commands[command]) {
+      handleUnknown(bot, msg);
+    }
+  });
+
+  logger.info('Bot commands registered', { commands: Object.keys(commands) });
+}
+
+// ============================================================
+// EXPORTS
+// ============================================================
+
+module.exports = {
+  registerCommands,
+  commands,
+  // Export individual handlers for testing
+  handleStart,
+  handleHelp,
+  handleStatus,
+  handleGann,
+  handlePlanets,
+  handleConfluence,
+  handleLevels,
+  handleCycles,
+  // Helpers
+  getCurrentPrice,
+  getHistoricalEvents
+};

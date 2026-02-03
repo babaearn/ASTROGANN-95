@@ -2,7 +2,7 @@
  * CRYPTO BILLIONAIRE BOT - Main Server
  * =====================================
  * Entry point for the intelligence bot
- * Express server with health check and database initialization
+ * Express server with health check, status, Telegram bot, and scheduled jobs
  */
 
 require('dotenv').config();
@@ -11,6 +11,12 @@ const express = require('express');
 const logger = require('./utils/logger');
 const db = require('./database/models');
 const gann = require('./modules/gann');
+const planetary = require('./modules/planetary');
+const confluence = require('./modules/confluence');
+
+// Bot and jobs
+const telegram = require('./bot/telegram');
+const jobs = require('./jobs');
 
 // ============================================================
 // CONFIGURATION
@@ -18,6 +24,7 @@ const gann = require('./modules/gann');
 
 const PORT = process.env.PORT || 3000;
 const NODE_ENV = process.env.NODE_ENV || 'development';
+const START_TIME = new Date();
 
 // ============================================================
 // EXPRESS APP SETUP
@@ -64,11 +71,15 @@ app.get('/health', async (req, res) => {
   // Check database connectivity
   try {
     const pool = db.getPool();
-    const result = await pool.query('SELECT NOW() as db_time');
-    health.database = {
-      connected: true,
-      serverTime: result.rows[0].db_time
-    };
+    if (pool) {
+      const result = await pool.query('SELECT NOW() as db_time');
+      health.database = {
+        connected: true,
+        serverTime: result.rows[0].db_time
+      };
+    } else {
+      health.database = { connected: false, reason: 'No pool' };
+    }
   } catch (error) {
     health.database = {
       connected: false,
@@ -77,8 +88,59 @@ app.get('/health', async (req, res) => {
     health.status = 'degraded';
   }
 
+  // Check Telegram bot
+  const botStatus = telegram.getStatus();
+  health.telegram = {
+    initialized: botStatus.initialized,
+    running: botStatus.running
+  };
+
   const statusCode = health.status === 'ok' ? 200 : 503;
   res.status(statusCode).json(health);
+});
+
+/**
+ * Status endpoint - detailed system status
+ */
+app.get('/status', async (req, res) => {
+  try {
+    const status = {
+      system: {
+        name: 'Crypto Billionaire Bot',
+        version: require('./package.json').version,
+        environment: NODE_ENV,
+        startTime: START_TIME.toISOString(),
+        uptime: process.uptime(),
+        memory: process.memoryUsage()
+      },
+      telegram: telegram.getStatus(),
+      jobs: jobs.getAllStatus(),
+      modules: {
+        gann: { available: true },
+        planetary: { available: true },
+        confluence: { available: true },
+        gemini: { enabled: !!process.env.GEMINI_API_KEY }
+      }
+    };
+
+    // Database status
+    try {
+      const pool = db.getPool();
+      if (pool) {
+        const result = await pool.query('SELECT NOW() as time');
+        status.database = { connected: true, time: result.rows[0].time };
+      } else {
+        status.database = { connected: false };
+      }
+    } catch (e) {
+      status.database = { connected: false, error: e.message };
+    }
+
+    res.json(status);
+  } catch (error) {
+    logger.error('Status endpoint error', { error: error.message });
+    res.status(500).json({ error: 'Failed to get status' });
+  }
 });
 
 /**
@@ -91,7 +153,10 @@ app.get('/', (req, res) => {
     version: require('./package.json').version,
     endpoints: {
       health: '/health',
-      gannDemo: '/api/gann/demo/:price'
+      status: '/status',
+      gannDemo: '/api/gann/demo/:price',
+      planetaryDemo: '/api/planetary/current',
+      confluenceDemo: '/api/confluence/:price'
     },
     documentation: 'See README.md for setup and usage instructions'
   });
@@ -117,7 +182,7 @@ app.get('/api/gann/demo/:price', (req, res) => {
     const wheel = gann.wheelOf24(price);
     const targets = gann.calculateTargets(price, 0.5, 5);
 
-    // Get historical events for cycle analysis (from db default data)
+    // Get historical events for cycle analysis
     const mockHistoricalEvents = [
       { event_date: '2024-04-20', event_type: 'halving', description: 'BTC Halving', significance: 10 },
       { event_date: '2024-03-14', event_type: 'ath', description: 'Post-ETF ATH', significance: 8 },
@@ -164,6 +229,88 @@ app.get('/api/gann/demo/:price', (req, res) => {
       error: 'Analysis failed',
       message: error.message
     });
+  }
+});
+
+/**
+ * Planetary Demo endpoint
+ */
+app.get('/api/planetary/current', (req, res) => {
+  try {
+    const planets = planetary.getCurrentPlanets();
+    const moon = planetary.getMoonInfo();
+    const aspects = planetary.getAspects();
+    const majorEvents = planetary.scanMajorEvents(null, 7);
+
+    res.json({
+      timestamp: new Date().toISOString(),
+      planets,
+      moon,
+      aspects: aspects.aspects.slice(0, 10),
+      majorEvents: majorEvents.events.slice(0, 5)
+    });
+  } catch (error) {
+    logger.error('Planetary demo error', { error: error.message });
+    res.status(500).json({
+      error: 'Analysis failed',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Confluence Demo endpoint
+ */
+app.get('/api/confluence/:price', async (req, res) => {
+  try {
+    const price = parseFloat(req.params.price);
+
+    if (isNaN(price) || price <= 0) {
+      return res.status(400).json({
+        error: 'Invalid price',
+        message: 'Price must be a positive number'
+      });
+    }
+
+    const result = await confluence.calculate(price);
+
+    res.json({
+      price,
+      timestamp: new Date().toISOString(),
+      confluence: {
+        score: result.score,
+        scorePercent: (result.score * 100).toFixed(1) + '%',
+        bias: result.bias,
+        components: result.components,
+        signals: result.signals
+      }
+    });
+  } catch (error) {
+    logger.error('Confluence demo error', { error: error.message });
+    res.status(500).json({
+      error: 'Analysis failed',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * Manual job trigger (protected)
+ */
+app.post('/api/jobs/:jobName/run', async (req, res) => {
+  // Simple protection - require a header
+  const authKey = req.headers['x-admin-key'];
+  if (authKey !== process.env.ADMIN_KEY && NODE_ENV === 'production') {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const { jobName } = req.params;
+
+  try {
+    await jobs.runJob(jobName);
+    res.json({ success: true, job: jobName, message: 'Job triggered' });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
   }
 });
 
@@ -218,12 +365,38 @@ async function startServer() {
     logger.warn('Continuing without database in development mode');
   }
 
+  // Initialize Telegram bot
+  try {
+    if (process.env.TELEGRAM_BOT_TOKEN) {
+      telegram.initialize();
+      await telegram.start();
+      logger.info('Telegram bot started');
+    } else {
+      logger.warn('TELEGRAM_BOT_TOKEN not set - bot will not start');
+    }
+  } catch (error) {
+    logger.error('Telegram bot initialization failed', { error: error.message });
+    // Continue without bot in development
+    if (NODE_ENV === 'production') {
+      logger.warn('Telegram bot failed but continuing...');
+    }
+  }
+
+  // Start scheduled jobs
+  try {
+    jobs.startAll();
+    logger.info('Scheduled jobs started');
+  } catch (error) {
+    logger.error('Job initialization failed', { error: error.message });
+  }
+
   // Start Express server
   const server = app.listen(PORT, () => {
     logger.info(`Server running on port ${PORT}`, {
       port: PORT,
       environment: NODE_ENV,
       healthCheck: `http://localhost:${PORT}/health`,
+      status: `http://localhost:${PORT}/status`,
       gannDemo: `http://localhost:${PORT}/api/gann/demo/45000`
     });
   });
@@ -231,6 +404,22 @@ async function startServer() {
   // Graceful shutdown
   const shutdown = async (signal) => {
     logger.info(`${signal} received, shutting down gracefully...`);
+
+    // Stop jobs first
+    try {
+      jobs.stopAll();
+      logger.info('Scheduled jobs stopped');
+    } catch (error) {
+      logger.error('Error stopping jobs', { error: error.message });
+    }
+
+    // Stop Telegram bot
+    try {
+      await telegram.stop();
+      logger.info('Telegram bot stopped');
+    } catch (error) {
+      logger.error('Error stopping Telegram bot', { error: error.message });
+    }
 
     server.close(async () => {
       logger.info('HTTP server closed');

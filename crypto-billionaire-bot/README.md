@@ -1,25 +1,35 @@
 # Crypto Billionaire Bot
 
-Billionaire-level crypto intelligence Telegram bot for personal intraday futures analysis. This is NOT automated trading - it's an intelligence + learning assistant powered by W.D. Gann mathematical principles, real-time market data, and planetary timing.
+Billionaire-level crypto intelligence Telegram bot for personal intraday futures analysis. This is NOT automated trading - it's an intelligence + learning assistant powered by W.D. Gann mathematical principles, real-time market data, planetary timing, and Gemini AI narration.
 
 ## Features
 
+- **Telegram Bot**: Daily briefings (5:30 AM IST), weekly war rooms (Sat 6 PM IST), high-confluence alerts
 - **Gann Analysis Engine**: Square of 9, time cycles, geometric angles, Wheel of 24
 - **Planetary Timing Engine**: Deterministic astronomical calculations with multi-source verification
+- **Confluence Scoring**: Weighted multi-factor scoring with weekly auto-calibration
+- **AI Narration**: Gemini Flash 2.5 explains analysis (never invents numbers)
+- **Learning Loop**: Snapshot → Outcomes → Weekly weight calibration
 - **Multi-Exchange Data**: Bybit V5 + Binance USD-M Futures (public APIs)
 - **Market Radar**: Whole-market breadth, regime scoring, top movers
-- **Learning System**: Analysis snapshots with outcome labeling for model improvement
 
 ## Architecture
 
 ```
 crypto-billionaire-bot/
+├── bot/
+│   ├── telegram.js           # Telegram bot core
+│   ├── commands.js           # Command handlers (/status, /gann, etc.)
+│   └── formatters.js         # Message formatting utilities
 ├── config/
 │   ├── index.js              # Centralized configuration
-│   └── constants.js          # Planetary constants, zodiac, aspects, orbs
+│   ├── constants.js          # Planetary constants, zodiac, aspects
+│   └── gemini-prompts.js     # Anti-hallucination prompts
 ├── modules/
 │   ├── gann.js               # Deterministic Gann analysis engine
 │   ├── planetary.js          # Planetary timing engine (VSOP87)
+│   ├── confluence.js         # Weighted confluence scoring
+│   ├── gemini.js             # Gemini AI narration
 │   ├── bybit.js              # Bybit V5 API client
 │   ├── binanceFutures.js     # Binance USD-M Futures client
 │   ├── coingecko.js          # CoinGecko API client
@@ -27,6 +37,13 @@ crypto-billionaire-bot/
 │   └── verifiers/
 │       ├── horizons.js       # JPL Horizons verification
 │       └── prokerala.js      # Prokerala API verification
+├── jobs/
+│   ├── index.js              # Job orchestration
+│   ├── daily-briefing.js     # 00:00 UTC (5:30 AM IST)
+│   ├── weekly-war-room.js    # Sat 12:30 UTC (6 PM IST)
+│   ├── alert-scanner.js      # Every 15 minutes
+│   ├── outcome-labeler.js    # Every hour
+│   └── weekly-calibration.js # Sun 00:00 UTC
 ├── database/
 │   ├── schema.sql            # PostgreSQL schema
 │   └── models.js             # Database access layer
@@ -45,8 +62,10 @@ crypto-billionaire-bot/
 ## Prerequisites
 
 - Node.js 18+
-- PostgreSQL 14+ (optional)
-- CoinGecko Demo API Key (required for market radar)
+- PostgreSQL 14+ (Railway provides this)
+- Telegram Bot Token (from @BotFather)
+- Gemini API Key (from Google AI Studio)
+- CoinGecko Demo API Key
 
 ## Quick Start
 
@@ -64,192 +83,142 @@ cp .env.example .env
 # Edit .env with your configuration
 ```
 
-**Required Variables:**
-```env
-COINGECKO_API_KEY=your_demo_api_key  # Get free at coingecko.com/api
-```
-
-**Planetary Verification (Optional):**
-```env
-HORIZONS_ENABLED=true               # JPL Horizons (free, no key)
-PROKERALA_ENABLED=false             # Prokerala (requires API key)
-PROKERALA_API_KEY=your_key          # If using Prokerala
-```
-
-### 3. Test Planetary Engine
+### 3. Start Locally
 
 ```bash
-# Test planetary calculations
-node scripts/test-planetary.js
-```
-
-### 4. Start Server
-
-```bash
-npm run dev   # Development
+npm run dev   # Development with auto-reload
 npm start     # Production
 ```
 
-## Planetary Engine
+## Railway Deployment
 
-The planetary module provides deterministic astronomical calculations using VSOP87 algorithms. No AI - pure celestial mechanics.
+### Required Variables
 
-### Current Planetary Positions
+Set these in Railway's Variables tab:
 
-```javascript
-const planetary = require('./modules/planetary');
+| Variable | Description |
+|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
+| `TELEGRAM_CHAT_ID` | Your personal chat ID |
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `DATABASE_URL` | Auto-provided by Railway PostgreSQL |
+| `COINGECKO_API_KEY` | CoinGecko demo API key |
+| `TZ` | `Asia/Kolkata` |
+| `NODE_ENV` | `production` |
 
-// Get all planet positions for current time
-const positions = planetary.getCurrentPlanets();
+### Optional Variables
 
-console.log('Sun:', positions.positions.SUN.formatted);   // "12°♈ 45'"
-console.log('Moon:', positions.positions.MOON.formatted);
-console.log('Mars:', positions.positions.MARS.sign);      // "Taurus"
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BYBIT_BASE_URL` | `https://api.bybit.com` | Bybit API endpoint |
+| `BINANCE_FUTURES_BASE_URL` | `https://fapi.binance.com` | Binance Futures endpoint |
+| `HORIZONS_ENABLED` | `true` | JPL Horizons verification |
+| `PROKERALA_ENABLED` | `false` | Prokerala verification |
+| `ADMIN_KEY` | - | For protected API endpoints |
 
-// Specific planets only
-const inner = planetary.getCurrentPlanets(new Date(), ['SUN', 'MOON', 'MERCURY']);
-```
+### Deploy Steps
 
-### Planetary Aspects
+1. Create new Railway project
+2. Add PostgreSQL plugin (auto-sets DATABASE_URL)
+3. Connect GitHub repo
+4. Set environment variables
+5. Deploy!
 
-```javascript
-// Get current aspects between classical planets
-const aspects = planetary.getAspects();
+## Telegram Commands
 
-for (const a of aspects.aspects) {
-  console.log(`${a.planet1.name} ${a.aspect.symbol} ${a.planet2.name}`);
-  console.log(`  Orb: ${a.orb}° | Strength: ${a.strength * 100}%`);
-  console.log(`  ${a.isExact ? 'EXACT' : a.isApplying ? 'Applying' : 'Separating'}`);
-}
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome and register |
+| `/help` | Available commands |
+| `/status` | Current BTC + confluence |
+| `/gann` | Gann Square of 9 & Wheel |
+| `/planets` | Planetary positions |
+| `/confluence` | Full confluence breakdown |
+| `/levels` | Key support/resistance |
+| `/cycles` | Cycle analysis |
 
-// With options
-const tightAspects = planetary.getAspects(null, {
-  planets: ['JUPITER', 'SATURN', 'URANUS', 'NEPTUNE', 'PLUTO'],
-  orbs: require('./config/constants').TIGHT_ORBS,
-  includeMinor: true
-});
-```
+## Scheduled Jobs
 
-### Moon Information
+| Job | Schedule | Description |
+|-----|----------|-------------|
+| Daily Briefing | 00:00 UTC (5:30 AM IST) | Gann + planetary + radar + confluence |
+| Weekly War Room | Sat 12:30 UTC (6 PM IST) | Weekly review + strategy |
+| Alert Scanner | Every 15 min | High-confluence detection |
+| Outcome Labeler | Every hour | Labels predictions at 1h/4h/24h |
+| Weekly Calibration | Sun 00:00 UTC | Adjusts confluence weights |
 
-```javascript
-const moonInfo = planetary.getMoonInfo();
+## API Endpoints
 
-console.log('Phase:', moonInfo.phaseSymbol, moonInfo.phase);  // 🌕 Full Moon
-console.log('Sign:', moonInfo.sign);                          // Leo
-console.log('Illumination:', moonInfo.illumination + '%');    // 98.5%
-console.log('Direction:', moonInfo.isWaxing ? 'Waxing' : 'Waning');
-```
+| Endpoint | Description |
+|----------|-------------|
+| `GET /` | Bot info |
+| `GET /health` | Health check (for Railway) |
+| `GET /status` | Detailed system status |
+| `GET /api/gann/demo/:price` | Gann analysis demo |
+| `GET /api/planetary/current` | Current planetary positions |
+| `GET /api/confluence/:price` | Confluence score demo |
+| `POST /api/jobs/:name/run` | Trigger job manually |
 
-### Major Event Scanning
+## Confluence Scoring
 
-```javascript
-// Scan for major events in next 30 days
-const now = new Date();
-const future = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-
-const events = planetary.scanMajorEvents(now, future);
-
-for (const event of events) {
-  console.log(`${event.timestamp}: ${event.type}`);
-  // ingress: Planet enters new sign
-  // new_moon, full_moon: Lunar phases
-  // outer_planet_aspect: Jupiter-Saturn square, etc.
-}
-```
-
-### Event Verification
-
-Multi-source verification ensures accuracy:
-
-```javascript
-// Verify an event against Horizons + Prokerala
-const event = events[0];
-const verification = await planetary.verifyMajorEvent(event);
-
-console.log('Overall Confidence:', verification.overallConfidence);
-// HIGH (< 0.1° delta), MEDIUM (< 0.5°), LOW (< 2°), FAIL
-
-for (const v of verification.verifications) {
-  console.log(`${v.source}: ${v.status} - ${v.overallConfidence}`);
-}
-```
-
-### Verification Sources
-
-| Source | Type | Key Required | Accuracy |
-|--------|------|--------------|----------|
-| VSOP87 | Primary | No | ±0.01° for inner planets |
-| JPL Horizons | Verification | No | Reference quality |
-| Prokerala | Verification | Yes (free) | Human-facing check |
-
-## Gann Module Usage
+The confluence module combines multiple factors with learnable weights:
 
 ```javascript
-const gann = require('./modules/gann');
+const confluence = require('./modules/confluence');
 
-// Square of 9 analysis
-const sq9 = gann.squareOf9(45000);
-console.log('Support Levels:', sq9.supportLevels);
-console.log('Resistance Levels:', sq9.resistanceLevels);
-
-// Cycle analysis
-const cycles = gann.analyzeCycles(new Date(), historicalEvents);
-console.log('Convergence Score:', cycles.convergenceScore);
-
-// Angle analysis
-const angles = gann.analyzeAngles(priceHistory);
-console.log('Trend:', angles.signals.trend);
-
-// Wheel of 24 with planetary overlay
-const wheel = gann.wheelOf24(45000, planetary.getCurrentPlanets().positions.MARS.longitude);
-console.log('Price-Planet Harmony:', wheel.aspectAnalysis.harmony);
+const result = await confluence.calculate(45000);
+console.log('Score:', result.score);      // 0.0 - 1.0
+console.log('Bias:', result.bias);        // bullish / bearish / neutral
+console.log('Components:', result.components);
 ```
 
-## Market Data Modules
+### Default Weights
 
-### Bybit V5 Client
+| Component | Weight | Description |
+|-----------|--------|-------------|
+| gann_sq9_cardinal | 15% | Near 0°/90°/180°/270° |
+| gann_sq9_position | 10% | Position in square |
+| gann_level_proximity | 15% | Close to key level |
+| cycle_convergence | 15% | Multiple cycles aligning |
+| cycle_major_hit | 10% | Major cycle (halving, etc.) |
+| planetary_aspect_tight | 10% | Tight planetary aspects |
+| planetary_major_event | 10% | Imminent celestial event |
+| planetary_moon_phase | 5% | Full/New moon |
+| market_regime | 5% | Fear/Greed (contrarian) |
+| market_momentum | 5% | OI/Volume signals |
+
+Weights are automatically calibrated weekly based on outcome data.
+
+## Gemini Narration
+
+Gemini Flash 2.5 provides educational narration with strict rules:
+- **NEVER invents numbers** - only uses data we provide
+- **Explains** patterns, doesn't predict outcomes
+- **Fallback formatting** if Gemini unavailable
 
 ```javascript
-const { bybitClient } = require('./modules/bybit');
+const gemini = require('./modules/gemini');
 
-const ticker = await bybitClient.getTickerBySymbol('BTCUSDT');
-const oi = await bybitClient.getOpenInterest({ symbol: 'BTCUSDT' });
-const funding = await bybitClient.getFundingRateHistory({ symbol: 'BTCUSDT' });
+// Narrate daily briefing (with data)
+const narration = await gemini.narrateDailyBriefing(briefingData);
 ```
 
-### Binance Futures Client
+## Learning Loop
 
-```javascript
-const { binanceFuturesClient } = require('./modules/binanceFutures');
+1. **Snapshots**: Analysis saved with price + confluence + bias
+2. **Outcomes**: Labeled at 1h, 4h, 24h with actual returns
+3. **Calibration**: Weekly weight adjustment based on hit rates
+4. **Slow Learning**: Max 2% weight adjustment per week
 
-const ticker = await binanceFuturesClient.get24hTicker({ symbol: 'BTCUSDT' });
-const lsRatio = await binanceFuturesClient.getGlobalLongShortRatio({ symbol: 'BTCUSDT' });
-```
+## Quality Gates
 
-### Market Radar
+The system runs reliably even when components are unavailable:
 
-```javascript
-const { marketRadar } = require('./modules/marketRadar');
-
-const snapshot = await marketRadar.generateSnapshot({ topCoinsCount: 200 });
-console.log('Regime:', snapshot.regimeLabel);  // STRONG_BULL, BULL, NEUTRAL, BEAR, STRONG_BEAR
-console.log('Score:', snapshot.regimeScore);   // 0-100
-```
-
-## Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PORT` | No | Server port (default: 3000) |
-| `NODE_ENV` | No | Environment (default: development) |
-| `TZ` | No | Display timezone (default: Asia/Kolkata) |
-| `DATABASE_URL` | No* | PostgreSQL connection string |
-| `LOG_LEVEL` | No | Log verbosity (default: info) |
-| `COINGECKO_API_KEY` | **Yes** | CoinGecko Demo API key |
-| `HORIZONS_ENABLED` | No | Enable JPL Horizons (default: true) |
-| `PROKERALA_ENABLED` | No | Enable Prokerala (default: false) |
-| `PROKERALA_API_KEY` | No | Prokerala API key (if enabled) |
+- ✅ Runs without Gemini (fallback to raw formatting)
+- ✅ Runs without verifiers (primary calculations only)
+- ✅ Runs without database (degraded, no persistence)
+- ✅ Creates analysis snapshots
+- ✅ Labels outcomes and recalibrates weekly
 
 ## Development
 
@@ -264,35 +233,34 @@ npm run dev
 npm run test:gann
 
 # Test planetary engine
-node scripts/test-planetary.js
+npm run test:planetary
 
-# Test market data modules
-node scripts/test-market-data.js
+# Test market data
+npm run test:market
+
+# Manually trigger jobs
+npm run job:briefing
+npm run job:warroom
+npm run job:calibrate
 ```
 
-## Parts Roadmap
+## Parts Complete
 
-- **Part 1** ✅: Foundation, schema, Gann engine
+- **Part 1** ✅: Foundation, PostgreSQL schema, Gann engine
 - **Part 2** ✅: Market data (Bybit, Binance, CoinGecko, Market Radar)
-- **Part 3** ✅: Planetary engine with verification (Horizons, Prokerala)
-- **Part 4**: Telegram bot, AI analysis, alerts
+- **Part 3** ✅: Planetary engine (VSOP87 + Horizons + Prokerala)
+- **Part 4** ✅: Telegram bot, Gemini narration, jobs, learning loop
 
 ## Key Principles
 
 1. **Deterministic Core**: Gann and Planetary modules are pure math - no AI
-2. **Multi-Source Verification**: Cross-check calculations with Horizons/Prokerala
-3. **UTC Storage**: All timestamps stored in UTC, displayed in IST
-4. **Graceful Degradation**: Verifiers fail silently, never crash
-5. **No Trading Execution**: Read-only market intelligence
-
-## Verification Confidence Levels
-
-| Level | Delta (°) | Meaning |
-|-------|-----------|---------|
-| HIGH | < 0.1° | Excellent match, highly reliable |
-| MEDIUM | < 0.5° | Good match, acceptable for timing |
-| LOW | < 2.0° | Marginal match, use with caution |
-| FAIL | > 5.0° | Verification failed, investigate |
+2. **AI Explains, Doesn't Predict**: Gemini narrates, never invents numbers
+3. **Multi-Source Verification**: Cross-check with Horizons/Prokerala
+4. **Slow Learning**: Weekly calibration with capped adjustments
+5. **UTC Storage**: All timestamps stored UTC, displayed IST
+6. **Graceful Degradation**: Components fail silently, never crash
+7. **No Trading Execution**: Read-only market intelligence
+8. **No Spam**: Alerts only on high confluence (≥75%)
 
 ## License
 
