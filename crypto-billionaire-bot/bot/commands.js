@@ -12,11 +12,12 @@ const confluence = require('../modules/confluence');
 const db = require('../database/models');
 
 // Market data modules (may not be available)
-let bybit, coingecko, marketRadar;
+let bybit, coingecko, marketRadar, coinAnalysis;
 try {
   bybit = require('../modules/bybit');
   coingecko = require('../modules/coingecko');
   marketRadar = require('../modules/marketRadar');
+  coinAnalysis = require('../modules/coinAnalysis');
 } catch (e) {
   logger.warn('Some market modules not available', { error: e.message });
 }
@@ -373,6 +374,84 @@ async function handleCycles(bot, msg) {
 }
 
 /**
+ * Handle /coin command - Comprehensive analysis for any coin
+ * Usage: /coin XRP or /coin ETHUSDT
+ */
+async function handleCoin(bot, msg, match) {
+  const chatId = msg.chat.id;
+
+  // Extract symbol from command
+  const text = msg.text || '';
+  const parts = text.split(/\s+/);
+  const symbolInput = parts[1];
+
+  if (!symbolInput) {
+    await bot.sendMessage(chatId,
+      `<b>📊 COIN ANALYSIS</b>\n\n` +
+      `Usage: <code>/coin SYMBOL</code>\n\n` +
+      `Examples:\n` +
+      `• /coin XRP\n` +
+      `• /coin ETH\n` +
+      `• /coin SOL\n` +
+      `• /coin DOGE\n\n` +
+      `Supported: BTC, ETH, XRP, SOL, BNB, ADA, DOGE, AVAX, DOT, LINK, MATIC, UNI, ATOM, LTC, NEAR, APT, ARB, OP, SUI, PEPE, SHIB, INJ, SEI, JUP, WIF and more...`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  if (!coinAnalysis) {
+    await bot.sendMessage(chatId, '⚠️ Coin analysis module not available.');
+    return;
+  }
+
+  // Send "analyzing" message
+  const loadingMsg = await bot.sendMessage(chatId,
+    `🔄 Analyzing <b>${symbolInput.toUpperCase()}</b>...\n\nFetching price, historical data, Gann levels, planetary positions...`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    const analysis = await coinAnalysis.analyzeCoin(symbolInput);
+
+    // Format and send the comprehensive analysis
+    const analysisMsg = formatters.formatCoinAnalysis(analysis);
+
+    // Delete loading message
+    try {
+      await bot.deleteMessage(chatId, loadingMsg.message_id);
+    } catch (e) {
+      // Ignore delete errors
+    }
+
+    // Send main analysis
+    await bot.sendMessage(chatId, analysisMsg, { parse_mode: 'HTML' });
+
+    // Send trading scenarios as separate message
+    if (analysis.scenarios && analysis.scenarios.length > 0) {
+      const scenariosMsg = formatters.formatTradingScenarios(analysis);
+      await bot.sendMessage(chatId, scenariosMsg, { parse_mode: 'HTML' });
+    }
+
+  } catch (error) {
+    logger.error('Coin command error', { error: error.message, symbol: symbolInput, chatId });
+
+    try {
+      await bot.deleteMessage(chatId, loadingMsg.message_id);
+    } catch (e) {}
+
+    let errorMsg = `⚠️ Unable to analyze ${symbolInput.toUpperCase()}.\n\n`;
+    if (error.message.includes('not found')) {
+      errorMsg += `Symbol not found on Bybit. Try:\n• ${symbolInput.toUpperCase()}USDT\n• Check spelling`;
+    } else {
+      errorMsg += `Error: ${error.message}`;
+    }
+
+    await bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
+  }
+}
+
+/**
  * Handle unknown command
  */
 async function handleUnknown(bot, msg) {
@@ -396,25 +475,41 @@ const commands = {
   planets: handlePlanets,
   confluence: handleConfluence,
   levels: handleLevels,
-  cycles: handleCycles
+  cycles: handleCycles,
+  coin: handleCoin
 };
 
 /**
  * Register all commands with bot
  */
 function registerCommands(bot) {
+  // Commands that take parameters
+  const paramCommands = ['coin'];
+
   // Register each command
   Object.entries(commands).forEach(([command, handler]) => {
-    bot.onText(new RegExp(`^/${command}(@\\w+)?$`, 'i'), (msg) => {
-      handler(bot, msg).catch(error => {
-        logger.error(`Command /${command} failed`, { error: error.message });
+    if (paramCommands.includes(command)) {
+      // Commands with parameters - match command + anything after
+      bot.onText(new RegExp(`^/${command}(@\\w+)?(\\s+.*)?$`, 'i'), (msg, match) => {
+        handler(bot, msg, match).catch(error => {
+          logger.error(`Command /${command} failed`, { error: error.message });
+        });
       });
-    });
+    } else {
+      // Commands without parameters
+      bot.onText(new RegExp(`^/${command}(@\\w+)?$`, 'i'), (msg) => {
+        handler(bot, msg).catch(error => {
+          logger.error(`Command /${command} failed`, { error: error.message });
+        });
+      });
+    }
   });
 
   // Handle unknown commands
   bot.onText(/^\/\w+/, (msg) => {
-    const command = msg.text.split('@')[0].replace('/', '').toLowerCase();
+    const text = msg.text || '';
+    const commandPart = text.split(/\s/)[0]; // Get first word
+    const command = commandPart.split('@')[0].replace('/', '').toLowerCase();
     if (!commands[command]) {
       handleUnknown(bot, msg);
     }
@@ -439,6 +534,7 @@ module.exports = {
   handleConfluence,
   handleLevels,
   handleCycles,
+  handleCoin,
   // Helpers
   getCurrentPrice,
   getHistoricalEvents

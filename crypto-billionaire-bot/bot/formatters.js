@@ -499,6 +499,7 @@ function formatHelp() {
 /planets - Planetary positions
 /confluence - Confluence score
 /levels - Key support/resistance
+/coin [SYMBOL] - Full analysis (XRP, ETH, SOL...)
 /help - This help message
 
 <b>Scheduled:</b>
@@ -508,6 +509,215 @@ function formatHelp() {
 
 <b>Note:</b> This is for analysis only.
 Not financial advice. DYOR.`;
+}
+
+/**
+ * Format comprehensive coin analysis
+ */
+function formatCoinAnalysis(analysis) {
+  const {
+    displayName,
+    price,
+    gann,
+    historicalLevels,
+    reversalZones,
+    trend,
+    planetary,
+    overallConfluence,
+    timestamp
+  } = analysis;
+
+  const trendEmoji = TREND_EMOJI[trend?.overall || 'neutral'];
+  const biasEmoji = TREND_EMOJI[planetary?.bias?.bias || 'neutral'];
+
+  let msg = `<b>📊 ${displayName} COMPLETE ANALYSIS</b>\n`;
+  msg += `<code>${formatTime(new Date(timestamp))}</code>\n\n`;
+
+  // ═══════════════════════════════════════════
+  // PRICE DATA
+  // ═══════════════════════════════════════════
+  msg += `<b>💰 PRICE DATA</b>\n`;
+  msg += `Current: <b>${formatCoinPrice(price.current, displayName)}</b>\n`;
+  msg += `24h: ${price.change24h >= 0 ? '🟢' : '🔴'} ${formatPercent(price.change24h)}\n`;
+  msg += `High: ${formatCoinPrice(price.high24h, displayName)} | Low: ${formatCoinPrice(price.low24h, displayName)}\n`;
+  if (price.fundingRate !== null) {
+    const frEmoji = price.fundingRate > 0 ? '📈' : '📉';
+    msg += `Funding: ${frEmoji} ${price.fundingRate?.toFixed(4)}%\n`;
+  }
+  msg += `\n`;
+
+  // ═══════════════════════════════════════════
+  // OVERALL CONFLUENCE
+  // ═══════════════════════════════════════════
+  const confBar = progressBar(overallConfluence.percentage);
+  msg += `<b>⚡ CONFLUENCE: ${overallConfluence.percentage}% [${overallConfluence.rating}]</b>\n`;
+  msg += `${confBar}\n`;
+  msg += `Active: ${overallConfluence.factors.slice(0, 3).join(' | ')}\n\n`;
+
+  // ═══════════════════════════════════════════
+  // GANN SQUARE OF 9
+  // ═══════════════════════════════════════════
+  msg += `<b>🔢 SQUARE OF 9</b>\n`;
+  msg += `Degree: <b>${gann.squareOf9.degree?.toFixed(1)}°</b> | Position: ${gann.squareOf9.inSquare?.toFixed(1)}%\n`;
+
+  if (gann.squareOf9.flags && Object.values(gann.squareOf9.flags).some(f => f)) {
+    const activeFlags = Object.entries(gann.squareOf9.flags)
+      .filter(([_, v]) => v)
+      .map(([k]) => k.replace(/([A-Z])/g, ' $1').trim());
+    msg += `⚠️ Flags: ${activeFlags.join(', ')}\n`;
+  }
+
+  // Sq9 Supports
+  msg += `Supports: `;
+  msg += gann.squareOf9.supports.slice(0, 3).map(s => formatCoinPrice(s, displayName)).join(' → ');
+  msg += `\n`;
+
+  // Sq9 Resistances
+  msg += `Resist: `;
+  msg += gann.squareOf9.resistances.slice(0, 3).map(r => formatCoinPrice(r, displayName)).join(' → ');
+  msg += `\n\n`;
+
+  // ═══════════════════════════════════════════
+  // GANN WHEEL OF 24
+  // ═══════════════════════════════════════════
+  msg += `<b>🎡 WHEEL OF 24</b>\n`;
+  msg += `Degree: <b>${gann.wheelOf24.degree?.toFixed(1)}°</b> | Quadrant: ${gann.wheelOf24.quadrant}\n`;
+  msg += `${gann.wheelOf24.description || ''}\n`;
+  if (gann.wheelOf24.nearCardinal) {
+    msg += `⚠️ Near Cardinal Angle (${gann.wheelOf24.cardinalDistance?.toFixed(1)}° away)\n`;
+  }
+  msg += `\n`;
+
+  // ═══════════════════════════════════════════
+  // KEY REVERSAL ZONES
+  // ═══════════════════════════════════════════
+  if (reversalZones && reversalZones.length > 0) {
+    msg += `<b>🎯 REVERSAL ZONES (Multi-Factor)</b>\n`;
+
+    const supports = reversalZones.filter(z => z.type === 'support').slice(0, 3);
+    const resistances = reversalZones.filter(z => z.type === 'resistance').slice(0, 3);
+
+    if (resistances.length > 0) {
+      msg += `<b>↑ RESISTANCE:</b>\n`;
+      resistances.forEach(z => {
+        const stars = '⭐'.repeat(Math.min(z.confluenceScore, 4));
+        msg += `${formatCoinPrice(z.price, displayName)} (${formatPercent(z.distancePercent)}) ${stars}\n`;
+        msg += `  └ ${z.factors.slice(0, 3).join(' + ')}\n`;
+      });
+    }
+
+    if (supports.length > 0) {
+      msg += `<b>↓ SUPPORT:</b>\n`;
+      supports.forEach(z => {
+        const stars = '⭐'.repeat(Math.min(z.confluenceScore, 4));
+        msg += `${formatCoinPrice(z.price, displayName)} (${formatPercent(z.distancePercent)}) ${stars}\n`;
+        msg += `  └ ${z.factors.slice(0, 3).join(' + ')}\n`;
+      });
+    }
+    msg += `\n`;
+  }
+
+  // ═══════════════════════════════════════════
+  // TREND ANALYSIS
+  // ═══════════════════════════════════════════
+  msg += `<b>📈 TREND STATUS</b>\n`;
+  msg += `4H: ${TREND_EMOJI[trend.timeframe4H?.trend]} ${(trend.timeframe4H?.trend || 'N/A').toUpperCase()} (${trend.timeframe4H?.strength}%)\n`;
+  msg += `Daily: ${TREND_EMOJI[trend.daily?.trend]} ${(trend.daily?.trend || 'N/A').toUpperCase()} (${trend.daily?.strength}%)\n`;
+  if (trend.timeframe4H?.positionInRange !== undefined) {
+    msg += `Position in Range: ${trend.timeframe4H.positionInRange}%\n`;
+  }
+  msg += `\n`;
+
+  // ═══════════════════════════════════════════
+  // PLANETARY BIAS
+  // ═══════════════════════════════════════════
+  msg += `<b>🌌 PLANETARY BIAS</b>\n`;
+  msg += `Moon: ${planetary.moon?.phaseSymbol || '🌓'} ${planetary.moon?.phase || 'N/A'} (${planetary.moon?.illumination?.toFixed(0)}%)\n`;
+  msg += `Bias: ${biasEmoji} ${(planetary.bias?.bias || 'NEUTRAL').toUpperCase()} (${planetary.bias?.biasStrength || 0}% strength)\n`;
+
+  if (planetary.bias?.signals?.length > 0) {
+    msg += `Signals:\n`;
+    planetary.bias.signals.slice(0, 4).forEach(s => {
+      const sigEmoji = s.bias === 'bullish' ? '🟢' : s.bias === 'bearish' ? '🔴' : '⚪';
+      msg += `  ${sigEmoji} ${s.factor}: ${s.note}\n`;
+    });
+  }
+
+  if (planetary.activeAspects?.length > 0) {
+    msg += `Active: `;
+    msg += planetary.activeAspects.slice(0, 3).map(a =>
+      `${a.planet1?.name || '?'} ${a.aspect?.symbol || '☌'} ${a.planet2?.name || '?'}`
+    ).join(', ');
+    msg += `\n`;
+  }
+
+  return msg;
+}
+
+/**
+ * Format trading scenarios
+ */
+function formatTradingScenarios(analysis) {
+  const { displayName, scenarios, trend, planetary, price } = analysis;
+
+  let msg = `<b>📋 ${displayName} TRADING SCENARIOS</b>\n\n`;
+
+  if (!scenarios || scenarios.length === 0) {
+    msg += `No clear setups at current price.\n`;
+    return msg;
+  }
+
+  scenarios.forEach((scenario, idx) => {
+    const typeEmoji = {
+      'LONG': '🟢',
+      'SHORT': '🔴',
+      'BREAKOUT_LONG': '🚀',
+      'BREAKDOWN_SHORT': '💀'
+    };
+
+    const confEmoji = scenario.confidence === 'high' ? '🔥' : '⚡';
+
+    msg += `<b>${typeEmoji[scenario.type] || '📍'} ${scenario.type}</b> ${confEmoji}\n`;
+    msg += `Condition: ${scenario.condition}\n`;
+    msg += `Entry Zone: ${formatCoinPrice(scenario.entry, displayName)}\n`;
+    msg += `HTF Bias: ${TREND_EMOJI[scenario.htfBias]} ${(scenario.htfBias || 'N/A').toUpperCase()}\n`;
+    msg += `Planetary: ${TREND_EMOJI[scenario.planetaryBias]} ${(scenario.planetaryBias || 'N/A').toUpperCase()}\n`;
+
+    if (scenario.confluence?.length > 0) {
+      msg += `Confluence: ${scenario.confluence.slice(0, 3).join(' + ')}\n`;
+    }
+
+    if (idx < scenarios.length - 1) {
+      msg += `\n${'─'.repeat(20)}\n\n`;
+    }
+  });
+
+  msg += `\n<b>⚠️ REMEMBER:</b>\n`;
+  msg += `• HTF ${trend?.daily?.trend?.toUpperCase() || 'trend'} bias is ${TREND_EMOJI[trend?.daily?.trend]} ${(trend?.daily?.trend || 'neutral').toUpperCase()}\n`;
+  msg += `• Wait for price action confirmation\n`;
+  msg += `• Set stops beyond key levels\n`;
+
+  return msg;
+}
+
+/**
+ * Format price for different coins (handles decimal places)
+ */
+function formatCoinPrice(price, symbol) {
+  if (price === null || price === undefined) return 'N/A';
+
+  // Determine decimal places based on price magnitude
+  let decimals = 2;
+  if (price < 0.0001) decimals = 8;
+  else if (price < 0.01) decimals = 6;
+  else if (price < 1) decimals = 4;
+  else if (price < 100) decimals = 3;
+  else decimals = 2;
+
+  return '$' + Number(price).toLocaleString('en-US', {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  });
 }
 
 /**
@@ -564,6 +774,7 @@ module.exports = {
   formatDate,
   escapeHtml,
   progressBar,
+  formatCoinPrice,
 
   // Message formatters
   formatDailyBriefing,
@@ -575,6 +786,8 @@ module.exports = {
   formatError,
   formatHelp,
   formatStatus,
+  formatCoinAnalysis,
+  formatTradingScenarios,
 
   // Constants
   TREND_EMOJI,
