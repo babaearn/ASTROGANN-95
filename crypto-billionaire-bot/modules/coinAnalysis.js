@@ -607,8 +607,8 @@ async function analyzeCoin(symbolInput) {
           degree: sq9.degreePosition,
           inSquare: sq9.percentInSquare,
           flags: sq9.flags,
-          supports: sq9.supportLevels.slice(0, 5),
-          resistances: sq9.resistanceLevels.slice(0, 5)
+          supports: sq9.supportLevels.slice(0, 5).map(s => s.level),
+          resistances: sq9.resistanceLevels.slice(0, 5).map(r => r.level)
         },
         wheelOf24: {
           degree: wheel24.degrees.normalized,
