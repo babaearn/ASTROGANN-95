@@ -499,7 +499,8 @@ function formatHelp() {
 /planets - Planetary positions
 /confluence - Confluence score
 /levels - Key support/resistance
-/coin [SYMBOL] - Full analysis (XRP, ETH, SOL...)
+/coin [SYMBOL] - Full A-Z analysis
+/test - Test all modules & APIs
 /help - This help message
 
 <b>Scheduled:</b>
@@ -721,6 +722,144 @@ function formatCoinPrice(price, symbol) {
 }
 
 /**
+ * Format planetary price levels (Billionaire Methods)
+ */
+function formatPlanetaryPriceLevels(analysis) {
+  const { displayName, price, planetaryPrice: pp } = analysis;
+
+  if (!pp) {
+    return `<b>🔮 PLANETARY PRICE ANALYSIS</b>\n\nNo planetary data available.`;
+  }
+
+  let msg = `<b>🔮 ${displayName} PLANETARY PRICE LEVELS</b>\n`;
+  msg += `<i>Billionaire-Level Planetary-Price Linkage</i>\n\n`;
+
+  // ═══════════════════════════════════════════
+  // PLANETARY PRICE ZONES
+  // ═══════════════════════════════════════════
+  if (pp.priceLevels?.levels?.length > 0) {
+    msg += `<b>🪐 PLANETARY PRICE ZONES</b>\n`;
+
+    // Active zones (price is at these levels NOW)
+    const activeZones = pp.priceLevels.activeZones || [];
+    if (activeZones.length > 0) {
+      msg += `⚠️ <b>ACTIVE NOW:</b>\n`;
+      activeZones.slice(0, 3).forEach(z => {
+        msg += `  ${z.symbol} ${z.planet}: ${formatCoinPrice(z.level, displayName)} (${z.sign})\n`;
+      });
+      msg += '\n';
+    }
+
+    // Resistance levels
+    const resistances = pp.priceLevels.resistances || [];
+    if (resistances.length > 0) {
+      msg += `↑ <b>Planetary Resistance:</b>\n`;
+      resistances.slice(0, 4).forEach(r => {
+        const activeMarker = r.isActive ? '🔥' : '';
+        msg += `  ${r.symbol} ${r.planet} (${r.longitude.toFixed(0)}°): ${formatCoinPrice(r.level, displayName)} ${activeMarker}\n`;
+      });
+      msg += '\n';
+    }
+
+    // Support levels
+    const supports = pp.priceLevels.supports || [];
+    if (supports.length > 0) {
+      msg += `↓ <b>Planetary Support:</b>\n`;
+      supports.slice(0, 4).forEach(s => {
+        const activeMarker = s.isActive ? '🔥' : '';
+        msg += `  ${s.symbol} ${s.planet} (${s.longitude.toFixed(0)}°): ${formatCoinPrice(s.level, displayName)} ${activeMarker}\n`;
+      });
+      msg += '\n';
+    }
+  }
+
+  // ═══════════════════════════════════════════
+  // PRICE-TIME SQUARE
+  // ═══════════════════════════════════════════
+  if (pp.priceTimeSquare) {
+    msg += `<b>⏰ PRICE-TIME SQUARE</b>\n`;
+
+    if (pp.priceTimeSquare.hasActiveSquare) {
+      const sq = pp.priceTimeSquare.strongestSquare;
+      msg += `🎯 <b>ACTIVE SQUARE:</b>\n`;
+      msg += `  ${sq.daysSince} days from ${sq.event}\n`;
+      msg += `  Target: ${formatCoinPrice(sq.targetPrice, displayName)} | Accuracy: ${sq.accuracy.toFixed(1)}%\n`;
+      msg += `  <i>Price = Time convergence → Major reversal zone</i>\n`;
+    } else if (pp.priceTimeSquare.squares?.length > 0) {
+      msg += `Nearest squares:\n`;
+      pp.priceTimeSquare.squares.slice(0, 2).forEach(sq => {
+        msg += `  • ${sq.daysSince}d from ${sq.event}: ${formatCoinPrice(sq.targetPrice, displayName)}\n`;
+      });
+    } else {
+      msg += `No active price-time squares.\n`;
+    }
+    msg += '\n';
+  }
+
+  // ═══════════════════════════════════════════
+  // LUNAR TRADING CYCLE
+  // ═══════════════════════════════════════════
+  if (pp.lunarCycle) {
+    const lc = pp.lunarCycle;
+    const zoneEmoji = {
+      'accumulation': '🟢',
+      'building': '🟢',
+      'expansion': '🟡',
+      'distribution': '🔴',
+      'decline': '🔴',
+      'capitulation': '⚪'
+    };
+
+    msg += `<b>🌙 LUNAR TRADING CYCLE</b>\n`;
+    msg += `Phase: ${lc.phaseSymbol} ${lc.phase} (${lc.illumination}%)\n`;
+    msg += `Zone: ${zoneEmoji[lc.tradingZone] || '⚪'} ${lc.tradingZone?.toUpperCase()}\n`;
+    msg += `${lc.recommendation}\n`;
+
+    if (lc.historicalBias) {
+      msg += `Historical: ${lc.historicalBias.bullishProbability}% bullish | Avg: ${lc.historicalBias.avgReturn > 0 ? '+' : ''}${lc.historicalBias.avgReturn}%\n`;
+    }
+    msg += '\n';
+  }
+
+  // ═══════════════════════════════════════════
+  // UPCOMING REVERSAL DATES
+  // ═══════════════════════════════════════════
+  if (pp.reversalDates?.dates?.length > 0) {
+    msg += `<b>📅 PLANETARY REVERSAL DATES</b>\n`;
+
+    pp.reversalDates.dates.slice(0, 5).forEach(rd => {
+      const sigEmoji = {
+        'very_high': '🔴',
+        'high': '🟠',
+        'medium': '🟡',
+        'low': '⚪'
+      };
+      const emoji = sigEmoji[rd.significance] || '⚪';
+      msg += `${emoji} ${rd.date} (${rd.daysUntil}d): ${rd.description}\n`;
+    });
+    msg += '\n';
+  }
+
+  // ═══════════════════════════════════════════
+  // OVERALL PLANETARY BIAS
+  // ═══════════════════════════════════════════
+  if (pp.overallBias) {
+    const biasEmoji = TREND_EMOJI[pp.overallBias.bias] || '⚪';
+    msg += `<b>Overall Planetary Bias:</b> ${biasEmoji} ${pp.overallBias.bias?.toUpperCase()} (${pp.overallBias.biasStrength}%)\n`;
+  }
+
+  // Summary points
+  if (pp.summary?.length > 0) {
+    msg += `\n<b>📝 KEY POINTS:</b>\n`;
+    pp.summary.slice(0, 3).forEach(point => {
+      msg += `• ${point}\n`;
+    });
+  }
+
+  return msg;
+}
+
+/**
  * Format status message
  */
 function formatStatus(data) {
@@ -788,6 +927,7 @@ module.exports = {
   formatStatus,
   formatCoinAnalysis,
   formatTradingScenarios,
+  formatPlanetaryPriceLevels,
 
   // Constants
   TREND_EMOJI,

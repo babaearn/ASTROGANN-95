@@ -9,6 +9,7 @@ const logger = require('../utils/logger');
 const { bybitClient } = require('./bybit');
 const gann = require('./gann');
 const planetary = require('./planetary');
+const planetaryPrice = require('./planetaryPrice');
 
 // ============================================================
 // SYMBOL MAPPING - Convert common names to Bybit symbols
@@ -567,6 +568,9 @@ async function analyzeCoin(symbolInput) {
     const planetaryData = { planets, moon: moonInfo, aspects, majorEvents };
     const planetaryBias = calculatePlanetaryBias(planetaryData);
 
+    // 7.5. Advanced Planetary Price Analysis (Billionaire Methods)
+    const advancedPlanetary = planetaryPrice.analyzePlanetaryForCoin(currentPrice, displayName);
+
     // 8. Generate trading scenarios
     const scenarios = generateTradingScenarios(
       currentPrice,
@@ -644,6 +648,16 @@ async function analyzeCoin(symbolInput) {
         bias: planetaryBias,
         activeAspects: aspects.aspects?.slice(0, 5) || [],
         upcomingEvents: majorEvents.events?.slice(0, 3) || []
+      },
+
+      // Advanced Planetary Price Analysis (Billionaire Methods)
+      planetaryPrice: {
+        priceLevels: advancedPlanetary.priceLevels,
+        priceTimeSquare: advancedPlanetary.priceTimeSquare,
+        lunarCycle: advancedPlanetary.lunarCycle,
+        reversalDates: advancedPlanetary.reversalDates,
+        overallBias: advancedPlanetary.overallBias,
+        summary: advancedPlanetary.summary
       },
 
       // Trading scenarios

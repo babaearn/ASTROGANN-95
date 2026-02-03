@@ -12,12 +12,13 @@ const confluence = require('../modules/confluence');
 const db = require('../database/models');
 
 // Market data modules (may not be available)
-let bybit, coingecko, marketRadar, coinAnalysis;
+let bybit, coingecko, marketRadar, coinAnalysis, planetaryPrice;
 try {
   bybit = require('../modules/bybit');
   coingecko = require('../modules/coingecko');
   marketRadar = require('../modules/marketRadar');
   coinAnalysis = require('../modules/coinAnalysis');
+  planetaryPrice = require('../modules/planetaryPrice');
 } catch (e) {
   logger.warn('Some market modules not available', { error: e.message });
 }
@@ -427,6 +428,12 @@ async function handleCoin(bot, msg, match) {
     // Send main analysis
     await bot.sendMessage(chatId, analysisMsg, { parse_mode: 'HTML' });
 
+    // Send planetary price levels (Billionaire Methods)
+    if (analysis.planetaryPrice) {
+      const planetaryMsg = formatters.formatPlanetaryPriceLevels(analysis);
+      await bot.sendMessage(chatId, planetaryMsg, { parse_mode: 'HTML' });
+    }
+
     // Send trading scenarios as separate message
     if (analysis.scenarios && analysis.scenarios.length > 0) {
       const scenariosMsg = formatters.formatTradingScenarios(analysis);
@@ -449,6 +456,212 @@ async function handleCoin(bot, msg, match) {
 
     await bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
   }
+}
+
+/**
+ * Handle /test command - Test all modules and APIs
+ */
+async function handleTest(bot, msg) {
+  const chatId = msg.chat.id;
+
+  const loadingMsg = await bot.sendMessage(chatId,
+    '🔄 <b>Testing all modules and APIs...</b>',
+    { parse_mode: 'HTML' }
+  );
+
+  const results = {
+    passed: [],
+    failed: [],
+    warnings: []
+  };
+
+  // Test 1: Bybit API
+  try {
+    if (bybit) {
+      const ticker = await bybit.bybitClient.getTickerBySymbol('BTCUSDT', 'linear');
+      if (ticker && ticker.lastPrice) {
+        results.passed.push(`✅ Bybit API: BTC = $${ticker.lastPrice.toLocaleString()}`);
+      } else {
+        results.warnings.push('⚠️ Bybit API: Connected but no price data');
+      }
+    } else {
+      results.failed.push('❌ Bybit module not loaded');
+    }
+  } catch (e) {
+    results.failed.push(`❌ Bybit API: ${e.message}`);
+  }
+
+  // Test 2: Bybit Klines
+  try {
+    if (bybit) {
+      const klines = await bybit.bybitClient.getKlineData({ symbol: 'BTCUSDT', interval: '60', limit: 10 });
+      if (klines && klines.list && klines.list.length > 0) {
+        results.passed.push(`✅ Bybit Klines: ${klines.list.length} candles fetched`);
+      } else {
+        results.warnings.push('⚠️ Bybit Klines: No data returned');
+      }
+    }
+  } catch (e) {
+    results.failed.push(`❌ Bybit Klines: ${e.message}`);
+  }
+
+  // Test 3: Gann Module
+  try {
+    const sq9 = gann.squareOf9(50000);
+    const wheel24 = gann.wheelOf24(50000);
+    if (sq9 && sq9.degreePosition !== undefined && wheel24) {
+      results.passed.push(`✅ Gann Sq9: ${sq9.degreePosition.toFixed(1)}° | Wheel24: Q${wheel24.wheelPosition?.quadrant}`);
+    } else {
+      results.warnings.push('⚠️ Gann module returned incomplete data');
+    }
+  } catch (e) {
+    results.failed.push(`❌ Gann module: ${e.message}`);
+  }
+
+  // Test 4: Planetary Module
+  try {
+    const planets = planetary.getCurrentPlanets();
+    const moon = planetary.getMoonInfo();
+    const aspects = planetary.getAspects();
+    if (planets && moon && aspects) {
+      const planetCount = Object.keys(planets).length;
+      results.passed.push(`✅ Planetary: ${planetCount} planets | Moon: ${moon.phase} | ${aspects.aspects?.length || 0} aspects`);
+    } else {
+      results.warnings.push('⚠️ Planetary module returned incomplete data');
+    }
+  } catch (e) {
+    results.failed.push(`❌ Planetary module: ${e.message}`);
+  }
+
+  // Test 5: Planetary Price Module
+  try {
+    if (planetaryPrice) {
+      const priceLevels = planetaryPrice.calculatePlanetaryPriceLevels(50000, 'BTC');
+      const lunarCycle = planetaryPrice.calculateLunarCycleZones();
+      if (priceLevels && priceLevels.levels && lunarCycle) {
+        results.passed.push(`✅ Planetary Price: ${priceLevels.levels.length} levels | Lunar: ${lunarCycle.tradingZone}`);
+      } else {
+        results.warnings.push('⚠️ Planetary Price module returned incomplete data');
+      }
+    } else {
+      results.failed.push('❌ Planetary Price module not loaded');
+    }
+  } catch (e) {
+    results.failed.push(`❌ Planetary Price: ${e.message}`);
+  }
+
+  // Test 6: Confluence Module
+  try {
+    const confResult = await confluence.calculate(50000);
+    if (confResult && confResult.score !== undefined) {
+      results.passed.push(`✅ Confluence: Score ${(confResult.score * 100).toFixed(0)}% | Bias: ${confResult.bias}`);
+    } else {
+      results.warnings.push('⚠️ Confluence module returned incomplete data');
+    }
+  } catch (e) {
+    results.failed.push(`❌ Confluence: ${e.message}`);
+  }
+
+  // Test 7: Database Connection
+  try {
+    const pool = db.getPool();
+    if (pool) {
+      const dbResult = await pool.query('SELECT NOW() as time');
+      results.passed.push(`✅ Database: Connected (${dbResult.rows[0].time.toISOString().split('T')[0]})`);
+    } else {
+      results.warnings.push('⚠️ Database: No connection pool');
+    }
+  } catch (e) {
+    results.warnings.push(`⚠️ Database: ${e.message}`);
+  }
+
+  // Test 8: CoinGecko (optional)
+  try {
+    if (coingecko) {
+      const global = await coingecko.coinGeckoClient.fetchGlobalData();
+      if (global && global.totalMarketCap) {
+        results.passed.push(`✅ CoinGecko: Total MCap $${(global.totalMarketCap / 1e12).toFixed(2)}T`);
+      } else {
+        results.warnings.push('⚠️ CoinGecko: No data returned');
+      }
+    } else {
+      results.warnings.push('⚠️ CoinGecko module not loaded (optional)');
+    }
+  } catch (e) {
+    results.warnings.push(`⚠️ CoinGecko: ${e.message} (optional)`);
+  }
+
+  // Test 9: Full Coin Analysis
+  try {
+    if (coinAnalysis) {
+      const analysis = await coinAnalysis.analyzeCoin('BTC');
+      if (analysis && analysis.price && analysis.gann && analysis.planetary) {
+        results.passed.push(`✅ Coin Analysis: BTC $${analysis.price.current.toLocaleString()} | Full data OK`);
+      } else {
+        results.warnings.push('⚠️ Coin Analysis: Incomplete data');
+      }
+    } else {
+      results.failed.push('❌ Coin Analysis module not loaded');
+    }
+  } catch (e) {
+    results.failed.push(`❌ Coin Analysis: ${e.message}`);
+  }
+
+  // Test 10: Market Radar (optional)
+  try {
+    if (marketRadar) {
+      const radar = await marketRadar.scanMarket();
+      if (radar) {
+        results.passed.push(`✅ Market Radar: ${radar.totalCoins || 'N/A'} coins scanned`);
+      } else {
+        results.warnings.push('⚠️ Market Radar: No data returned');
+      }
+    } else {
+      results.warnings.push('⚠️ Market Radar not loaded (optional)');
+    }
+  } catch (e) {
+    results.warnings.push(`⚠️ Market Radar: ${e.message} (optional)`);
+  }
+
+  // Delete loading message
+  try {
+    await bot.deleteMessage(chatId, loadingMsg.message_id);
+  } catch (e) {}
+
+  // Build result message
+  let msg = `<b>🧪 SYSTEM TEST RESULTS</b>\n`;
+  msg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
+
+  msg += `<b>Summary:</b>\n`;
+  msg += `✅ Passed: ${results.passed.length}\n`;
+  msg += `⚠️ Warnings: ${results.warnings.length}\n`;
+  msg += `❌ Failed: ${results.failed.length}\n\n`;
+
+  if (results.passed.length > 0) {
+    msg += `<b>Passed Tests:</b>\n`;
+    results.passed.forEach(p => msg += `${p}\n`);
+    msg += '\n';
+  }
+
+  if (results.warnings.length > 0) {
+    msg += `<b>Warnings:</b>\n`;
+    results.warnings.forEach(w => msg += `${w}\n`);
+    msg += '\n';
+  }
+
+  if (results.failed.length > 0) {
+    msg += `<b>Failed:</b>\n`;
+    results.failed.forEach(f => msg += `${f}\n`);
+    msg += '\n';
+  }
+
+  const overallStatus = results.failed.length === 0 ?
+    (results.warnings.length === 0 ? '🟢 ALL SYSTEMS OPERATIONAL' : '🟡 OPERATIONAL WITH WARNINGS') :
+    '🔴 SOME SYSTEMS FAILING';
+
+  msg += `<b>Status:</b> ${overallStatus}`;
+
+  await bot.sendMessage(chatId, msg, { parse_mode: 'HTML' });
 }
 
 /**
@@ -476,7 +689,8 @@ const commands = {
   confluence: handleConfluence,
   levels: handleLevels,
   cycles: handleCycles,
-  coin: handleCoin
+  coin: handleCoin,
+  test: handleTest
 };
 
 /**
@@ -535,6 +749,7 @@ module.exports = {
   handleLevels,
   handleCycles,
   handleCoin,
+  handleTest,
   // Helpers
   getCurrentPrice,
   getHistoricalEvents
