@@ -1,0 +1,15 @@
+{
+  "name": "astrogann-95",
+  "version": "1.0.0",
+  "description": "Crypto Billionaire Bot - Monorepo Root",
+  "private": true,
+  "scripts": {
+    "postinstall": "cd crypto-billionaire-bot && npm install",
+    "start": "cd crypto-billionaire-bot && npm start",
+    "dev": "cd crypto-billionaire-bot && npm run dev",
+    "test": "cd crypto-billionaire-bot && npm test"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
