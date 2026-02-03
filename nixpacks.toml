@@ -5,7 +5,7 @@ providers = ["node"]
 nixPkgs = ["nodejs_20", "npm"]
 
 [phases.install]
-cmds = ["cd crypto-billionaire-bot && npm ci --legacy-peer-deps"]
+cmds = ["npm ci && cd crypto-billionaire-bot && npm ci --legacy-peer-deps"]
 
 [start]
-cmd = "cd crypto-billionaire-bot && npm start"
+cmd = "cd crypto-billionaire-bot && node server.js"
