@@ -630,39 +630,39 @@ async function handleTest(bot, msg) {
   } catch (e) {}
 
   // Build result message
-  let msg = `<b>🧪 SYSTEM TEST RESULTS</b>\n`;
-  msg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
+  let testMsg = `<b>🧪 SYSTEM TEST RESULTS</b>\n`;
+  testMsg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
 
-  msg += `<b>Summary:</b>\n`;
-  msg += `✅ Passed: ${results.passed.length}\n`;
-  msg += `⚠️ Warnings: ${results.warnings.length}\n`;
-  msg += `❌ Failed: ${results.failed.length}\n\n`;
+  testMsg += `<b>Summary:</b>\n`;
+  testMsg += `✅ Passed: ${results.passed.length}\n`;
+  testMsg += `⚠️ Warnings: ${results.warnings.length}\n`;
+  testMsg += `❌ Failed: ${results.failed.length}\n\n`;
 
   if (results.passed.length > 0) {
-    msg += `<b>Passed Tests:</b>\n`;
-    results.passed.forEach(p => msg += `${p}\n`);
-    msg += '\n';
+    testMsg += `<b>Passed Tests:</b>\n`;
+    results.passed.forEach(p => testMsg += `${p}\n`);
+    testMsg += '\n';
   }
 
   if (results.warnings.length > 0) {
-    msg += `<b>Warnings:</b>\n`;
-    results.warnings.forEach(w => msg += `${w}\n`);
-    msg += '\n';
+    testMsg += `<b>Warnings:</b>\n`;
+    results.warnings.forEach(w => testMsg += `${w}\n`);
+    testMsg += '\n';
   }
 
   if (results.failed.length > 0) {
-    msg += `<b>Failed:</b>\n`;
-    results.failed.forEach(f => msg += `${f}\n`);
-    msg += '\n';
+    testMsg += `<b>Failed:</b>\n`;
+    results.failed.forEach(f => testMsg += `${f}\n`);
+    testMsg += '\n';
   }
 
   const overallStatus = results.failed.length === 0 ?
     (results.warnings.length === 0 ? '🟢 ALL SYSTEMS OPERATIONAL' : '🟡 OPERATIONAL WITH WARNINGS') :
     '🔴 SOME SYSTEMS FAILING';
 
-  msg += `<b>Status:</b> ${overallStatus}`;
+  testMsg += `<b>Status:</b> ${overallStatus}`;
 
-  await bot.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+  await bot.sendMessage(chatId, testMsg, { parse_mode: 'HTML' });
 }
 
 /**
@@ -693,20 +693,20 @@ async function handleScan(bot, msg) {
     } catch (e) {}
 
     // Format summary
-    let msg = `<b>🔍 REVERSAL SCAN RESULTS</b>\n`;
-    msg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
-    msg += `Tickers scanned: <b>${scanResult.tickersScanned}</b>\n`;
-    msg += `Reversals found: <b>${scanResult.reversalsFound}</b>\n`;
-    msg += `Scan time: ${scanResult.scanDurationMs}ms\n\n`;
+    let scanMsg = `<b>🔍 REVERSAL SCAN RESULTS</b>\n`;
+    scanMsg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
+    scanMsg += `Tickers scanned: <b>${scanResult.tickersScanned}</b>\n`;
+    scanMsg += `Reversals found: <b>${scanResult.reversalsFound}</b>\n`;
+    scanMsg += `Scan time: ${scanResult.scanDurationMs}ms\n\n`;
 
     if (scanResult.results.length === 0) {
-      msg += `<i>No high-confluence reversals detected.</i>\n\n`;
-      msg += `Try again later or lower the threshold.`;
-      await bot.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+      scanMsg += `<i>No high-confluence reversals detected.</i>\n\n`;
+      scanMsg += `Try again later or lower the threshold.`;
+      await bot.sendMessage(chatId, scanMsg, { parse_mode: 'HTML' });
       return;
     }
 
-    msg += `<b>🎯 TOP REVERSAL OPPORTUNITIES:</b>\n\n`;
+    scanMsg += `<b>🎯 TOP REVERSAL OPPORTUNITIES:</b>\n\n`;
 
     scanResult.results.forEach((r, i) => {
       const emoji = r.reversalScore.rating === 'HIGH' ? '🔴' : r.reversalScore.rating === 'MEDIUM' ? '🟡' : '⚪';
@@ -714,25 +714,25 @@ async function handleScan(bot, msg) {
         ? `$${r.price.toFixed(6)}`
         : `$${r.price.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 
-      msg += `${i + 1}. ${emoji} <b>${r.baseCoin}</b> - Score: ${r.reversalScore.percentage}%\n`;
-      msg += `   ${priceStr} (${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(1)}%)\n`;
+      scanMsg += `${i + 1}. ${emoji} <b>${r.baseCoin}</b> - Score: ${r.reversalScore.percentage}%\n`;
+      scanMsg += `   ${priceStr} (${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(1)}%)\n`;
 
       // Show factors
       r.reversalScore.factors.slice(0, 2).forEach(f => {
-        msg += `   • ${f}\n`;
+        scanMsg += `   • ${f}\n`;
       });
-      msg += `\n`;
+      scanMsg += `\n`;
     });
 
     // Add explanation
-    msg += `<b>📐 LEGEND:</b>\n`;
-    msg += `🔴 HIGH (60%+) = Strong reversal zone\n`;
-    msg += `🟡 MEDIUM (40-59%) = Watch for confirmation\n`;
-    msg += `⚪ LOW (<40%) = Minor signal\n\n`;
+    scanMsg += `<b>📐 LEGEND:</b>\n`;
+    scanMsg += `🔴 HIGH (60%+) = Strong reversal zone\n`;
+    scanMsg += `🟡 MEDIUM (40-59%) = Watch for confirmation\n`;
+    scanMsg += `⚪ LOW (<40%) = Minor signal\n\n`;
 
-    msg += `<i>Use /coin [SYMBOL] for detailed analysis</i>`;
+    scanMsg += `<i>Use /coin [SYMBOL] for detailed analysis</i>`;
 
-    await bot.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+    await bot.sendMessage(chatId, scanMsg, { parse_mode: 'HTML' });
 
     // Also check Price-Time alignments
     const ptAlignments = await reversalScanner.scanPriceTimeAlignments();
