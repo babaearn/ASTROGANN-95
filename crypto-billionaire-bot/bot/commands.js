@@ -567,7 +567,10 @@ async function handleGannModel2(bot, msg, chatId, symbol, bybitSymbol, timeframe
     const ntrIcon = confirmations.naturalTimeRatio ? '✅' : '❌';
     msg2 += `${ntrIcon} <b>Natural Time Ratio</b>\n`;
     if (details.naturalTimeRatio?.reason) {
-      msg2 += `   <i>${details.naturalTimeRatio.reason}</i>\n`;
+      msg2 += `   ${details.naturalTimeRatio.reason}\n`;
+    }
+    if (details.naturalTimeRatio?.explanation) {
+      msg2 += `   <i>${details.naturalTimeRatio.explanation}</i>\n`;
     }
     msg2 += `\n`;
 
@@ -575,7 +578,10 @@ async function handleGannModel2(bot, msg, chatId, symbol, bybitSymbol, timeframe
     const mbIcon = confirmations.marketBreath ? '✅' : '❌';
     msg2 += `${mbIcon} <b>Market Breath</b>\n`;
     if (details.marketBreath?.reason) {
-      msg2 += `   <i>${details.marketBreath.reason}</i>\n`;
+      msg2 += `   ${details.marketBreath.reason}\n`;
+    }
+    if (details.marketBreath?.explanation) {
+      msg2 += `   <i>${details.marketBreath.explanation}</i>\n`;
     }
     msg2 += `\n`;
 
@@ -583,7 +589,10 @@ async function handleGannModel2(bot, msg, chatId, symbol, bybitSymbol, timeframe
     const oeIcon = confirmations.oddEvenImpulse ? '✅' : '❌';
     msg2 += `${oeIcon} <b>Odd-Even Impulse</b>\n`;
     if (details.oddEvenImpulse?.reason) {
-      msg2 += `   <i>${details.oddEvenImpulse.reason}</i>\n`;
+      msg2 += `   ${details.oddEvenImpulse.reason}\n`;
+    }
+    if (details.oddEvenImpulse?.explanation) {
+      msg2 += `   <i>${details.oddEvenImpulse.explanation}</i>\n`;
     }
     msg2 += `\n`;
 
@@ -591,7 +600,10 @@ async function handleGannModel2(bot, msg, chatId, symbol, bybitSymbol, timeframe
     const tpeIcon = confirmations.timePriceEquality ? '✅' : '❌';
     msg2 += `${tpeIcon} <b>Time-Price Equality</b>\n`;
     if (details.timePriceEquality?.reason) {
-      msg2 += `   <i>${details.timePriceEquality.reason}</i>\n`;
+      msg2 += `   ${details.timePriceEquality.reason}\n`;
+    }
+    if (details.timePriceEquality?.explanation) {
+      msg2 += `   <i>${details.timePriceEquality.explanation}</i>\n`;
     }
     msg2 += `\n`;
 
@@ -599,7 +611,10 @@ async function handleGannModel2(bot, msg, chatId, symbol, bybitSymbol, timeframe
     const mmIcon = confirmations.midnightMemory ? '✅' : '❌';
     msg2 += `${mmIcon} <b>Midnight Memory</b>\n`;
     if (details.midnightMemory?.reason) {
-      msg2 += `   <i>${details.midnightMemory.reason}</i>\n`;
+      msg2 += `   ${details.midnightMemory.reason}\n`;
+    }
+    if (details.midnightMemory?.explanation) {
+      msg2 += `   <i>${details.midnightMemory.explanation}</i>\n`;
     }
 
     await bot.sendMessage(chatId, msg2, { parse_mode: 'HTML' });
