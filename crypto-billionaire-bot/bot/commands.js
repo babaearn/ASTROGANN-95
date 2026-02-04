@@ -191,38 +191,241 @@ async function handleStatus(bot, msg) {
 }
 
 /**
- * Handle /gann command
+ * Handle /gann command - Complete Gann + Planetary analysis for any coin
+ * Usage: /gann XRP or /gann XRP 1D or /gann BTC 4H
  */
 async function handleGann(bot, msg) {
   const chatId = msg.chat.id;
 
-  try {
-    const priceData = await getCurrentPrice();
+  // Parse command: /gann [SYMBOL] [TIMEFRAME]
+  const text = msg.text || '';
+  const parts = text.split(/\s+/);
+  const symbolInput = parts[1];
+  const timeframeInput = parts[2];
 
-    if (!priceData) {
-      await bot.sendMessage(chatId, '⚠️ Unable to fetch current price. Please try again later.');
-      return;
+  // Default to BTC if no symbol provided
+  const symbol = symbolInput ? symbolInput.toUpperCase() : 'BTC';
+
+  // Supported timeframes
+  const TIMEFRAMES = {
+    '5M': '5', '15M': '15', '30M': '30',
+    '1H': '60', '2H': '120', '4H': '240',
+    '1D': 'D', 'D': 'D', 'DAILY': 'D',
+    '1W': 'W', 'W': 'W', 'WEEKLY': 'W'
+  };
+
+  const timeframe = timeframeInput ? (TIMEFRAMES[timeframeInput.toUpperCase()] || '240') : '240'; // Default 4H
+  const tfDisplay = Object.entries(TIMEFRAMES).find(([k, v]) => v === timeframe)?.[0] || '4H';
+
+  // Show usage if just /gann
+  if (!symbolInput) {
+    await bot.sendMessage(chatId,
+      `<b>📐 GANN + PLANETARY ANALYSIS</b>\n\n` +
+      `Usage: <code>/gann SYMBOL [TIMEFRAME]</code>\n\n` +
+      `<b>Examples:</b>\n` +
+      `• /gann XRP\n` +
+      `• /gann BTC 1D\n` +
+      `• /gann SOL 4H\n` +
+      `• /gann ETH 1W\n\n` +
+      `<b>Timeframes:</b>\n` +
+      `5M, 15M, 30M, 1H, 2H, 4H, 1D, 1W\n\n` +
+      `<i>Default: 4H timeframe</i>`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  // Send loading message
+  const loadingMsg = await bot.sendMessage(chatId,
+    `🔄 Analyzing <b>${symbol}</b> on <b>${tfDisplay}</b>...\n\nGann + Planetary calculations...`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    if (!coinAnalysis || !planetaryPrice) {
+      throw new Error('Analysis modules not available');
     }
 
-    const price = priceData.price;
+    // Get full coin analysis with specified timeframe
+    const analysis = await coinAnalysis.analyzeCoin(symbol, { interval: timeframe });
+    const price = analysis.price.current;
+    const displayName = analysis.displayName;
 
-    // Run Gann analyses
-    const sq9 = gann.squareOf9(price);
-    const wheel24 = gann.wheelOf24(price);
-    const targets = gann.calculateTargets(price, 0.5, 5);
+    // Delete loading message
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
 
-    const gannMsg = formatters.formatGann({
-      price,
-      sq9,
-      wheel24,
-      targets,
-      timestamp: new Date()
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 1: GANN SQUARE OF 9 + WHEEL OF 24
+    // ═══════════════════════════════════════════════════════════════
+    let gannMsg = `<b>📐 ${displayName} GANN ANALYSIS</b>\n`;
+    gannMsg += `<code>${formatters.formatTime(new Date())} | ${tfDisplay}</code>\n\n`;
+
+    // Price
+    const changeEmoji = analysis.price.change24h >= 0 ? '🟢' : '🔴';
+    gannMsg += `<b>💰 ${formatters.formatCoinPrice(price, displayName)}</b> ${changeEmoji} ${formatters.formatPercent(analysis.price.change24h)}\n\n`;
+
+    // Square of 9
+    gannMsg += `<b>🔢 SQUARE OF 9</b>\n`;
+    gannMsg += `Degree: <b>${analysis.gann.squareOf9.degree?.toFixed(1)}°</b>\n`;
+
+    // Sq9 Flags
+    const flags = analysis.gann.squareOf9.flags || {};
+    if (flags.nearCardinal) gannMsg += `⚠️ <b>NEAR CARDINAL</b> - Major reversal zone\n`;
+    if (flags.nearTop) gannMsg += `⚠️ <b>NEAR CYCLE TOP</b>\n`;
+    if (flags.nearBottom) gannMsg += `⚠️ <b>NEAR CYCLE BOTTOM</b>\n`;
+
+    // Sq9 Levels
+    gannMsg += `\n<b>↓ Sq9 Support:</b>\n`;
+    analysis.gann.squareOf9.supports.slice(0, 3).forEach(s => {
+      gannMsg += `  ${formatters.formatCoinPrice(s, displayName)}\n`;
     });
 
+    gannMsg += `\n<b>↑ Sq9 Resistance:</b>\n`;
+    analysis.gann.squareOf9.resistances.slice(0, 3).forEach(r => {
+      gannMsg += `  ${formatters.formatCoinPrice(r, displayName)}\n`;
+    });
+
+    // Wheel of 24
+    gannMsg += `\n<b>🎡 WHEEL OF 24</b>\n`;
+    gannMsg += `Degree: <b>${analysis.gann.wheelOf24.degree?.toFixed(1)}°</b>\n`;
+    gannMsg += `Quadrant: <b>Q${analysis.gann.wheelOf24.quadrant}</b> - ${analysis.gann.wheelOf24.description || ''}\n`;
+
+    if (analysis.gann.wheelOf24.nearCardinal) {
+      gannMsg += `⚠️ <b>NEAR QUADRANT BOUNDARY</b> - Phase change zone\n`;
+    }
+
     await bot.sendMessage(chatId, gannMsg, { parse_mode: 'HTML' });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 2: PLANETARY PRICE LEVELS (Billionaire Format)
+    // ═══════════════════════════════════════════════════════════════
+    if (analysis.planetaryPrice) {
+      let ppMsg = `<b>🔮 ${displayName} PLANETARY PRICE LEVELS</b>\n`;
+      ppMsg += `<i>Billionaire-Level Planetary-Price Linkage</i>\n\n`;
+
+      const pp = analysis.planetaryPrice;
+
+      // Planetary Price Zones
+      ppMsg += `<b>🪐 PLANETARY PRICE ZONES</b>\n`;
+
+      // Active zones (near current price)
+      if (pp.activeZones && pp.activeZones.length > 0) {
+        ppMsg += `⚠️ <b>ACTIVE NOW:</b>\n`;
+        pp.activeZones.slice(0, 2).forEach(z => {
+          ppMsg += `  ${z.symbol || '🪐'} ${z.planet}: ${formatters.formatCoinPrice(z.level, displayName)} (${z.sign || ''})\n`;
+        });
+        ppMsg += `  ← Price is HERE\n\n`;
+      }
+
+      // Planetary Resistance
+      if (pp.levels) {
+        const resistLevels = pp.levels.filter(l => l.level > price).slice(0, 3);
+        if (resistLevels.length > 0) {
+          ppMsg += `<b>↑ Planetary Resistance:</b>\n`;
+          resistLevels.forEach(l => {
+            ppMsg += `  ${l.symbol || '🪐'} ${l.planet} (${l.longitude?.toFixed(0)}°): ${formatters.formatCoinPrice(l.level, displayName)}\n`;
+          });
+          ppMsg += `\n`;
+        }
+
+        // Planetary Support
+        const supportLevels = pp.levels.filter(l => l.level < price).slice(0, 3);
+        if (supportLevels.length > 0) {
+          ppMsg += `<b>↓ Planetary Support:</b>\n`;
+          supportLevels.forEach(l => {
+            ppMsg += `  ${l.symbol || '🪐'} ${l.planet} (${l.longitude?.toFixed(0)}°): ${formatters.formatCoinPrice(l.level, displayName)}\n`;
+          });
+          ppMsg += `\n`;
+        }
+      }
+
+      // Price-Time Square
+      if (pp.priceTimeSquare) {
+        ppMsg += `<b>⏰ PRICE-TIME SQUARE</b>\n`;
+        if (pp.priceTimeSquare.hasAlignment) {
+          ppMsg += `🎯 <b>ACTIVE SQUARE:</b>\n`;
+          ppMsg += `  ${pp.priceTimeSquare.daysSince} days from ${pp.priceTimeSquare.event || 'Major Event'}\n`;
+          ppMsg += `  Target: ${formatters.formatCoinPrice(pp.priceTimeSquare.targetPrice, displayName)} | Accuracy: ${pp.priceTimeSquare.accuracy?.toFixed(1)}%\n`;
+          ppMsg += `  <i>Price = Time convergence → Major reversal zone</i>\n\n`;
+        } else {
+          ppMsg += `  No active alignment\n`;
+          ppMsg += `  Nearest: ${pp.priceTimeSquare.daysSince || 'N/A'}d → $${pp.priceTimeSquare.closestTarget?.toFixed(0) || 'N/A'}\n\n`;
+        }
+      }
+
+      // Lunar Cycle
+      if (pp.lunarCycle) {
+        ppMsg += `<b>🌙 LUNAR TRADING CYCLE</b>\n`;
+        const moonEmoji = pp.lunarCycle.illumination > 90 ? '🌕' :
+                         pp.lunarCycle.illumination > 60 ? '🌔' :
+                         pp.lunarCycle.illumination > 40 ? '🌓' :
+                         pp.lunarCycle.illumination > 10 ? '🌒' : '🌑';
+        ppMsg += `Phase: ${moonEmoji} ${pp.lunarCycle.phase} (${pp.lunarCycle.illumination?.toFixed(0)}%)\n`;
+
+        const zoneEmoji = pp.lunarCycle.tradingZone === 'ACCUMULATION' ? '🟢' :
+                         pp.lunarCycle.tradingZone === 'DISTRIBUTION' ? '🔴' : '🟡';
+        ppMsg += `Zone: ${zoneEmoji} <b>${pp.lunarCycle.tradingZone}</b>\n`;
+        ppMsg += `<i>${pp.lunarCycle.tradingAdvice || ''}</i>\n\n`;
+      }
+
+      // Planetary Reversal Dates
+      if (pp.reversalDates && pp.reversalDates.length > 0) {
+        ppMsg += `<b>📅 PLANETARY REVERSAL DATES</b>\n`;
+        pp.reversalDates.slice(0, 3).forEach(d => {
+          const urgency = d.daysUntil <= 3 ? '🔴' : d.daysUntil <= 7 ? '🟠' : '🟡';
+          ppMsg += `${urgency} ${d.date} (${d.daysUntil}d): ${d.event}\n`;
+        });
+        ppMsg += `\n`;
+      }
+
+      // Overall Planetary Bias
+      if (analysis.planetary && analysis.planetary.bias) {
+        const bias = analysis.planetary.bias;
+        const biasEmoji = bias.bias === 'bullish' ? '🟢' : bias.bias === 'bearish' ? '🔴' : '⚪';
+        ppMsg += `<b>Overall Planetary Bias:</b> ${biasEmoji} <b>${(bias.bias || 'NEUTRAL').toUpperCase()}</b> (${bias.score || 50}%)`;
+      }
+
+      await bot.sendMessage(chatId, ppMsg, { parse_mode: 'HTML' });
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 3: KEY REVERSAL ZONES + TRADING SCENARIOS
+    // ═══════════════════════════════════════════════════════════════
+    if (analysis.reversalZones && analysis.reversalZones.length > 0) {
+      let zoneMsg = `<b>🎯 ${displayName} KEY REVERSAL ZONES</b>\n`;
+      zoneMsg += `<code>Timeframe: ${tfDisplay}</code>\n\n`;
+
+      analysis.reversalZones.slice(0, 5).forEach((z, i) => {
+        const arrow = z.type === 'resistance' ? '↑' : '↓';
+        const nearby = z.isNearby ? '⚠️' : '';
+        zoneMsg += `${i + 1}. ${arrow} ${formatters.formatCoinPrice(z.price, displayName)} ${nearby}\n`;
+        zoneMsg += `   Confluence: ${z.confluenceScore}x (${z.factors.slice(0, 2).join(' + ')})\n`;
+        zoneMsg += `   Distance: ${z.distancePercent >= 0 ? '+' : ''}${z.distancePercent.toFixed(2)}%\n\n`;
+      });
+
+      // Trading guidance
+      const nearbyZone = analysis.reversalZones.find(z => z.isNearby);
+      if (nearbyZone) {
+        zoneMsg += `⚠️ <b>ALERT:</b> Price near ${nearbyZone.type} zone!\n`;
+        zoneMsg += `Watch for confirmation before trading.\n`;
+      }
+
+      await bot.sendMessage(chatId, zoneMsg, { parse_mode: 'HTML' });
+    }
+
   } catch (error) {
-    logger.error('Gann command error', { error: error.message, chatId });
-    await bot.sendMessage(chatId, formatters.formatError(error, '/gann'), { parse_mode: 'HTML' });
+    logger.error('Gann command error', { error: error.message, symbol, chatId });
+
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
+
+    let errorMsg = `⚠️ Unable to analyze ${symbol}.\n\n`;
+    if (error.message.includes('not found')) {
+      errorMsg += `Symbol not found on Bybit. Try: ${symbol}USDT`;
+    } else {
+      errorMsg += `Error: ${error.message}`;
+    }
+
+    await bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
   }
 }
 
@@ -847,7 +1050,7 @@ const commands = {
  */
 function registerCommands(bot) {
   // Commands that take parameters
-  const paramCommands = ['coin'];
+  const paramCommands = ['coin', 'gann'];
 
   // Register each command
   Object.entries(commands).forEach(([command, handler]) => {

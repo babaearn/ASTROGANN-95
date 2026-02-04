@@ -499,13 +499,24 @@ function calculateEMA(data, period) {
 /**
  * Perform comprehensive coin analysis
  * @param {string} symbolInput - Coin symbol (e.g., 'XRP', 'ETH', 'BTCUSDT')
+ * @param {Object} options - Analysis options
+ * @param {string} options.interval - Timeframe interval (5, 15, 60, 240, D, W)
  * @returns {Promise<Object>} Complete analysis
  */
-async function analyzeCoin(symbolInput) {
+async function analyzeCoin(symbolInput, options = {}) {
   const symbol = normalizeSymbol(symbolInput);
   const displayName = getDisplayName(symbol);
 
-  logger.info('Starting comprehensive coin analysis', { symbol, displayName });
+  // Timeframe configuration
+  const interval = options.interval || '240'; // Default 4H
+  const TIMEFRAME_NAMES = {
+    '5': '5m', '15': '15m', '30': '30m',
+    '60': '1H', '120': '2H', '240': '4H',
+    'D': '1D', 'W': '1W'
+  };
+  const timeframeName = TIMEFRAME_NAMES[interval] || '4H';
+
+  logger.info('Starting comprehensive coin analysis', { symbol, displayName, interval: timeframeName });
 
   try {
     // 1. Fetch current price
@@ -522,11 +533,14 @@ async function analyzeCoin(symbolInput) {
     const openInterest = ticker.openInterest;
     const fundingRate = ticker.fundingRate;
 
-    // 2. Fetch historical klines for multiple timeframes
-    const [klines4H, klinesDaily] = await Promise.all([
-      bybitClient.getKlineData({ symbol, interval: '240', limit: 100 }), // 4H
-      bybitClient.getKlineData({ symbol, interval: 'D', limit: 100 })    // Daily
+    // 2. Fetch historical klines for specified timeframe + daily
+    const [klinesMain, klinesDaily] = await Promise.all([
+      bybitClient.getKlineData({ symbol, interval, limit: 100 }), // Specified timeframe
+      bybitClient.getKlineData({ symbol, interval: 'D', limit: 100 })    // Daily for context
     ]);
+
+    // Use main timeframe for 4H reference (backwards compatibility)
+    const klines4H = klinesMain;
 
     // 3. Gann Analysis
     const sq9 = gann.squareOf9(currentPrice);
@@ -593,6 +607,7 @@ async function analyzeCoin(symbolInput) {
       symbol,
       displayName,
       timestamp: new Date().toISOString(),
+      timeframe: timeframeName,
 
       // Price data
       price: {
