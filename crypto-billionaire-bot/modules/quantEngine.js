@@ -610,7 +610,8 @@ function checkNaturalTimeRatio(candles, dailyContext) {
       confirmed: false,
       confidence: 0,
       ratio: null,
-      reason: 'No clear swing structure'
+      reason: 'No clear swing found to measure time ratios',
+      explanation: 'Need a swing high/low to calculate Fibonacci time extensions'
     };
   }
 
@@ -620,12 +621,21 @@ function checkNaturalTimeRatio(candles, dailyContext) {
     swings.lows[0]?.index || 999
   );
 
+  // Calculate all ratios and find closest
+  const ratioDistances = CONFIG.TIME_RATIOS.RATIOS.map(ratio => {
+    const targetBars = Math.round(lastSwingIndex * ratio);
+    return {
+      ratio,
+      targetBars,
+      distance: Math.abs(targetBars - candles.length)
+    };
+  });
+
+  const closestRatio = ratioDistances.sort((a, b) => a.distance - b.distance)[0];
+
   // Check if current bar count matches a Fibonacci ratio of recent move duration
   for (const ratio of CONFIG.TIME_RATIOS.RATIOS) {
     const targetBars = Math.round(lastSwingIndex * ratio);
-    const currentBars = 0; // Current bar
-
-    // Check if we're at a ratio extension point
     const tolerance = Math.max(1, Math.round(lastSwingIndex * CONFIG.TIME_RATIOS.TOLERANCE_PERCENT / 100));
 
     if (Math.abs(targetBars - candles.length) <= tolerance) {
@@ -634,7 +644,9 @@ function checkNaturalTimeRatio(candles, dailyContext) {
         confidence: 0.7,
         ratio,
         barsFromSwing: lastSwingIndex,
-        reason: `At ${ratio} time extension from swing (${lastSwingIndex} bars)`
+        currentBars: candles.length,
+        reason: `✅ At ${ratio} time extension (${candles.length} bars from ${lastSwingIndex}-bar swing)`,
+        explanation: `Price moved for ${lastSwingIndex} bars. Now at ${ratio}x extension = potential reversal time.`
       };
     }
   }
@@ -642,9 +654,13 @@ function checkNaturalTimeRatio(candles, dailyContext) {
   return {
     confirmed: false,
     confidence: 0,
-    ratio: null,
+    ratio: closestRatio.ratio,
     barsFromSwing: lastSwingIndex,
-    reason: 'Not at significant time ratio'
+    currentBars: candles.length,
+    nearestTarget: closestRatio.targetBars,
+    barsToNext: closestRatio.distance,
+    reason: `Current: ${candles.length} bars | Nearest ratio: ${closestRatio.ratio}x = ${closestRatio.targetBars} bars (${closestRatio.distance} bars away)`,
+    explanation: `Fibonacci ratios: 0.382, 0.5, 0.618, 1.0, 1.618. Swing was ${lastSwingIndex} bars. Not at key ratio yet.`
   };
 }
 
@@ -663,8 +679,9 @@ function checkMarketBreath(candles, dailyContext) {
     recentATR.push(tr);
   }
 
-  const currentATR = recentATR[0];
+  const currentATR = recentATR[0] || 0;
   const avgATR = recentATR.reduce((a, b) => a + b, 0) / recentATR.length;
+  const ratio = avgATR > 0 ? (currentATR / avgATR * 100).toFixed(0) : 0;
 
   const isCompressed = currentATR < avgATR * CONFIG.BREATH.COMPRESSION_ATR_RATIO;
   const isExpanding = currentATR > avgATR * CONFIG.BREATH.EXPANSION_ATR_RATIO;
@@ -675,16 +692,36 @@ function checkMarketBreath(candles, dailyContext) {
 
   const transitionDetected = wasCompressed && nowExpanding;
 
+  // Build detailed reason
+  let state, reason, explanation;
+  if (transitionDetected) {
+    state = 'EXPANDING';
+    reason = `✅ Breakout detected! ATR jumped from compressed to ${ratio}% of average`;
+    explanation = `Volatility was squeezed, now expanding. Expect big directional move.`;
+  } else if (isCompressed) {
+    state = 'COMPRESSED';
+    reason = `Current ATR: ${ratio}% of average (< 50% = compressed)`;
+    explanation = `Low volatility squeeze. Big move brewing. Wait for expansion breakout.`;
+  } else if (isExpanding) {
+    state = 'EXPANDING';
+    reason = `Current ATR: ${ratio}% of average (> 150% = high volatility)`;
+    explanation = `High volatility period. Move already in progress.`;
+  } else {
+    state = 'NORMAL';
+    reason = `Current ATR: ${ratio}% of average (50-150% = normal)`;
+    explanation = `Normal volatility. No compression/expansion signal.`;
+  }
+
   return {
     confirmed: transitionDetected,
     confidence: transitionDetected ? 0.8 : 0.3,
-    state: isCompressed ? 'COMPRESSED' : (isExpanding ? 'EXPANDING' : 'NORMAL'),
+    state,
     currentATR,
     avgATR,
     ratio: currentATR / avgATR,
-    reason: transitionDetected
-      ? 'Compression → Expansion transition detected'
-      : (isCompressed ? 'In compression phase' : 'Normal volatility')
+    ratioPercent: ratio,
+    reason,
+    explanation
   };
 }
 
@@ -711,6 +748,24 @@ function checkOddEvenImpulse(candles) {
   const isSignificantCount = CONFIG.IMPULSE.SIGNIFICANT_COUNTS.includes(pushCount);
   const isExhaustion = pushCount >= 5;
 
+  // Calculate next significant count
+  const nextSignificant = CONFIG.IMPULSE.SIGNIFICANT_COUNTS.find(c => c > pushCount) || 7;
+  const barsToNext = nextSignificant - pushCount;
+
+  let reason, explanation;
+  if (isSignificantCount) {
+    if (isExhaustion) {
+      reason = `✅ ${pushCount}${getOrdinal(pushCount)} ${dominantDirection} push - EXHAUSTION ZONE`;
+      explanation = `${pushCount} consecutive ${dominantDirection.toLowerCase()} bars = trend exhaustion. Look for reversal.`;
+    } else {
+      reason = `✅ ${pushCount}${getOrdinal(pushCount)} ${dominantDirection} push - momentum peak`;
+      explanation = `Odd-number pushes (3rd, 5th, 7th) often mark turning points.`;
+    }
+  } else {
+    reason = `${upPushes} up / ${downPushes} down bars | Count: ${pushCount} (need 3, 5, or 7)`;
+    explanation = `Key counts: 3rd push = first reversal zone, 5th = exhaustion warning, 7th = likely reversal. ${barsToNext} more for next signal.`;
+  }
+
   return {
     confirmed: isSignificantCount,
     confidence: isExhaustion ? 0.85 : 0.6,
@@ -719,9 +774,10 @@ function checkOddEvenImpulse(candles) {
     upPushes,
     downPushes,
     isExhaustion,
-    reason: isSignificantCount
-      ? `${pushCount}${getOrdinal(pushCount)} ${dominantDirection} push (${isExhaustion ? 'exhaustion' : 'momentum'})`
-      : `${pushCount} pushes - not at significant count`
+    nextSignificant,
+    barsToNext,
+    reason,
+    explanation
   };
 }
 
@@ -730,6 +786,15 @@ function checkOddEvenImpulse(candles) {
  */
 function checkTimePriceEquality(price, currentTime, dailyContext) {
   const hoursFromMidnight = currentTime.getUTCHours() + currentTime.getUTCMinutes() / 60;
+
+  // Calculate all multiplier matches
+  const matches = CONFIG.TIME_PRICE.MULTIPLIERS.map(multiplier => {
+    const timeAsPrice = hoursFromMidnight * multiplier;
+    const percentDiff = Math.abs(price - timeAsPrice) / price * 100;
+    return { multiplier, timeAsPrice, percentDiff };
+  });
+
+  const closest = matches.sort((a, b) => a.percentDiff - b.percentDiff)[0];
 
   // Try different multipliers to find price-time match
   for (const multiplier of CONFIG.TIME_PRICE.MULTIPLIERS) {
@@ -744,7 +809,8 @@ function checkTimePriceEquality(price, currentTime, dailyContext) {
         timeValue: hoursFromMidnight,
         priceEquivalent: timeAsPrice,
         percentDiff,
-        reason: `Price ($${price.toFixed(2)}) ≈ Time (${hoursFromMidnight.toFixed(1)}h × ${multiplier})`
+        reason: `✅ Price = Time! $${price.toFixed(2)} ≈ ${hoursFromMidnight.toFixed(1)}h × ${multiplier} = $${timeAsPrice.toFixed(2)}`,
+        explanation: `Gann's "Price = Time" rule: When price equals time value, market is balanced. Major reversal zone.`
       };
     }
   }
@@ -752,7 +818,12 @@ function checkTimePriceEquality(price, currentTime, dailyContext) {
   return {
     confirmed: false,
     confidence: 0,
-    reason: 'No time-price equality found'
+    timeValue: hoursFromMidnight,
+    closestMultiplier: closest.multiplier,
+    closestPrice: closest.timeAsPrice,
+    closestDiff: closest.percentDiff,
+    reason: `Time: ${hoursFromMidnight.toFixed(1)}h UTC | Nearest: ${closest.multiplier}x = $${closest.timeAsPrice.toFixed(2)} (${closest.percentDiff.toFixed(1)}% away)`,
+    explanation: `Gann Balance: Price should equal Time × multiplier (1, 10, 100, 1000). Currently ${closest.percentDiff.toFixed(1)}% from match.`
   };
 }
 
@@ -765,6 +836,10 @@ function checkMidnightMemory(currentPrice, candles, dailyContext) {
   // Check if price has revisited midnight open
   const proximity = Math.abs(currentPrice - midnightOpen) / midnightOpen * 100;
   const isNearMidnight = proximity <= CONFIG.MIDNIGHT.PROXIMITY_PERCENT;
+
+  // Price above or below midnight
+  const priceVsMidnight = currentPrice > midnightOpen ? 'above' : 'below';
+  const priceDiff = currentPrice - midnightOpen;
 
   // Check if price previously moved away and is now returning
   let movedAway = false;
@@ -780,16 +855,29 @@ function checkMidnightMemory(currentPrice, candles, dailyContext) {
 
   const isRevisit = movedAway && isNearMidnight;
 
+  let reason, explanation;
+  if (isRevisit) {
+    reason = `✅ Price returned to midnight open ($${midnightOpen.toLocaleString()}) after ${maxDistance.toFixed(1)}% move`;
+    explanation = `Market "remembers" the 00:00 UTC open. Return after large move = key decision point.`;
+  } else if (isNearMidnight) {
+    reason = `At midnight open ($${midnightOpen.toLocaleString()}) - no significant move yet`;
+    explanation = `Price still near daily open. Wait for move away then return for signal.`;
+  } else {
+    reason = `Current: $${currentPrice.toLocaleString()} | Midnight: $${midnightOpen.toLocaleString()} | ${proximity.toFixed(1)}% ${priceVsMidnight}`;
+    explanation = `Price moved ${proximity.toFixed(1)}% from midnight open. Watch for return to $${midnightOpen.toLocaleString()} for reversal.`;
+  }
+
   return {
     confirmed: isRevisit,
     confidence: isRevisit ? 0.7 : 0.2,
     midnightOpen,
+    currentPrice,
     currentDistance: proximity,
     maxDistanceReached: maxDistance,
     movedAway,
-    reason: isRevisit
-      ? `Price returned to midnight open ($${midnightOpen.toFixed(2)}) after ${maxDistance.toFixed(1)}% move`
-      : (isNearMidnight ? 'Near midnight open (no significant move away)' : 'Away from midnight open')
+    priceVsMidnight,
+    reason,
+    explanation
   };
 }
 
