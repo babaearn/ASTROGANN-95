@@ -12,7 +12,7 @@ const confluence = require('../modules/confluence');
 const db = require('../database/models');
 
 // Market data modules (may not be available)
-let bybit, coingecko, marketRadar, coinAnalysis, planetaryPrice, reversalScanner;
+let bybit, coingecko, marketRadar, coinAnalysis, planetaryPrice, reversalScanner, quantEngine;
 try {
   bybit = require('../modules/bybit');
   coingecko = require('../modules/coingecko');
@@ -20,9 +20,13 @@ try {
   coinAnalysis = require('../modules/coinAnalysis');
   planetaryPrice = require('../modules/planetaryPrice');
   reversalScanner = require('../modules/reversalScanner');
+  quantEngine = require('../modules/quantEngine');
 } catch (e) {
   logger.warn('Some market modules not available', { error: e.message });
 }
+
+// In-memory model preferences (fallback when DB unavailable)
+const userModelPreferences = new Map();
 
 // ============================================================
 // HELPER FUNCTIONS
@@ -90,6 +94,50 @@ async function getHistoricalEvents() {
     { event_date: '2021-11-10', event_type: 'ath', description: '2021 Cycle ATH', significance: 9 },
     { event_date: '2020-05-11', event_type: 'halving', description: 'Third Halving', significance: 10 }
   ];
+}
+
+// ============================================================
+// MODEL PREFERENCE HELPERS
+// ============================================================
+
+/**
+ * Get user's analysis model preference (1 = Classic, 2 = Quant)
+ */
+async function getUserModel(chatId) {
+  // Try database first
+  try {
+    const settings = await db.getUserSettings(chatId);
+    if (settings?.alert_preferences?.analysisModel) {
+      return settings.alert_preferences.analysisModel;
+    }
+  } catch (e) {
+    logger.debug('Failed to get model preference from DB', { error: e.message });
+  }
+
+  // Fallback to in-memory
+  return userModelPreferences.get(chatId) || 1; // Default: Model 1 (Classic)
+}
+
+/**
+ * Set user's analysis model preference
+ */
+async function setUserModel(chatId, model) {
+  // Store in memory
+  userModelPreferences.set(chatId, model);
+
+  // Try to persist to database
+  try {
+    const settings = await db.getUserSettings(chatId);
+    const alertPrefs = settings?.alert_preferences || {};
+    alertPrefs.analysisModel = model;
+
+    await db.upsertUserSettings(chatId, {
+      ...settings,
+      alertPreferences: alertPrefs
+    });
+  } catch (e) {
+    logger.debug('Failed to save model preference to DB', { error: e.message });
+  }
 }
 
 // ============================================================
@@ -193,6 +241,7 @@ async function handleStatus(bot, msg) {
 /**
  * Handle /gann command - Complete Gann + Planetary analysis for any coin
  * Usage: /gann XRP or /gann XRP 1D or /gann BTC 4H
+ * Dispatches to Model 1 (Classic) or Model 2 (Quant) based on user preference
  */
 async function handleGann(bot, msg) {
   const chatId = msg.chat.id;
@@ -205,6 +254,7 @@ async function handleGann(bot, msg) {
 
   // Default to BTC if no symbol provided
   const symbol = symbolInput ? symbolInput.toUpperCase() : 'BTC';
+  const bybitSymbol = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`;
 
   // Supported timeframes
   const TIMEFRAMES = {
@@ -217,10 +267,14 @@ async function handleGann(bot, msg) {
   const timeframe = timeframeInput ? (TIMEFRAMES[timeframeInput.toUpperCase()] || '240') : '240'; // Default 4H
   const tfDisplay = Object.entries(TIMEFRAMES).find(([k, v]) => v === timeframe)?.[0] || '4H';
 
+  // Get user's model preference
+  const userModel = await getUserModel(chatId);
+
   // Show usage if just /gann
   if (!symbolInput) {
+    const modelName = userModel === 1 ? 'Classic' : 'Quant';
     await bot.sendMessage(chatId,
-      `<b>📐 GANN + PLANETARY ANALYSIS</b>\n\n` +
+      `<b>📐 GANN ANALYSIS (Model ${userModel}: ${modelName})</b>\n\n` +
       `Usage: <code>/gann SYMBOL [TIMEFRAME]</code>\n\n` +
       `<b>Examples:</b>\n` +
       `• /gann XRP\n` +
@@ -229,15 +283,20 @@ async function handleGann(bot, msg) {
       `• /gann ETH 1W\n\n` +
       `<b>Timeframes:</b>\n` +
       `5M, 15M, 30M, 1H, 2H, 4H, 1D, 1W\n\n` +
-      `<i>Default: 4H timeframe</i>`,
+      `<i>Default: 4H timeframe | /model to switch models</i>`,
       { parse_mode: 'HTML' }
     );
     return;
   }
 
-  // Send loading message
+  // Route to appropriate model handler
+  if (userModel === 2 && quantEngine) {
+    return handleGannModel2(bot, msg, chatId, symbol, bybitSymbol, timeframe, tfDisplay);
+  }
+
+  // Model 1 (Classic) - Continue with existing logic
   const loadingMsg = await bot.sendMessage(chatId,
-    `🔄 Analyzing <b>${symbol}</b> on <b>${tfDisplay}</b>...\n\nGann + Planetary calculations...`,
+    `🔄 Analyzing <b>${symbol}</b> on <b>${tfDisplay}</b>...\n\n<i>Model 1: Classic Gann + Planetary</i>`,
     { parse_mode: 'HTML' }
   );
 
@@ -424,6 +483,155 @@ async function handleGann(bot, msg) {
     } else {
       errorMsg += `Error: ${error.message}`;
     }
+
+    await bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Handle /gann with Model 2 - Quant Engine
+ * Hybrid Multi-Confirmation Analysis with AI explanations
+ */
+async function handleGannModel2(bot, msg, chatId, symbol, bybitSymbol, timeframe, tfDisplay) {
+  const loadingMsg = await bot.sendMessage(chatId,
+    `🔄 Analyzing <b>${symbol}</b> on <b>${tfDisplay}</b>...\n\n<i>Model 2: Quant Engine (AI-powered)</i>`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    // Run Quant Engine analysis
+    const result = await quantEngine.analyze(bybitSymbol);
+
+    // Delete loading message
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 1: QUANT ENGINE OVERVIEW
+    // ═══════════════════════════════════════════════════════════════
+    const stateEmoji = result.finalState === 'ACTIONABLE' ? '🟢' :
+                       result.finalState === 'WAIT' ? '🟡' : '⚪';
+    const biasEmoji = result.dailyBias === 'BULLISH' ? '🟢' :
+                      result.dailyBias === 'BEARISH' ? '🔴' : '⚪';
+
+    let msg1 = `<b>🧠 ${symbol} QUANT ENGINE ANALYSIS</b>\n`;
+    msg1 += `<code>${formatters.formatTime(new Date())} | Model 2</code>\n\n`;
+
+    // Decision State
+    msg1 += `<b>DECISION:</b> ${stateEmoji} <b>${result.finalState}</b>\n`;
+    msg1 += `Confidence: ${(result.confidence * 100).toFixed(0)}%\n\n`;
+
+    // Current Price & Daily Bias
+    msg1 += `<b>💰 ${formatters.formatCoinPrice(result.currentPrice, symbol)}</b>\n`;
+    msg1 += `Daily Bias: ${biasEmoji} ${result.dailyBias}\n\n`;
+
+    // Daily Context
+    if (result.dailyContext) {
+      msg1 += `<b>📊 DAILY CONTEXT</b>\n`;
+      msg1 += `Daily Open: ${formatters.formatCoinPrice(result.dailyContext.dailyOpen, symbol)}\n`;
+      msg1 += `PDH: ${formatters.formatCoinPrice(result.dailyContext.pdh, symbol)}\n`;
+      msg1 += `PDL: ${formatters.formatCoinPrice(result.dailyContext.pdl, symbol)}\n`;
+      if (result.dailyContext.isCompressed) msg1 += `⚠️ Market COMPRESSED - expect expansion\n`;
+      if (result.dailyContext.isExpanded) msg1 += `⚠️ Market EXPANDED - volatility high\n`;
+      msg1 += `\n`;
+    }
+
+    // Time Sensitivity
+    msg1 += `<b>⏰ TIME SENSITIVITY</b>\n`;
+    if (result.timeSensitive) {
+      msg1 += `✅ ACTIVE: ${result.timeWindow}\n`;
+      msg1 += `Hours from midnight: ${result.timeDetails?.hoursFromMidnight?.toFixed(1)}h\n`;
+    } else {
+      msg1 += `❌ Outside time window\n`;
+      msg1 += `Next window: ${result.timeDetails?.nextWindow || 'N/A'}\n`;
+    }
+    msg1 += `\n`;
+
+    // Price Location
+    msg1 += `<b>📍 PRICE LOCATION</b>\n`;
+    msg1 += `Zone: <b>${result.priceLocation || 'NEUTRAL'}</b>\n`;
+    if (result.priceDetails?.reason) {
+      msg1 += `${result.priceDetails.reason}\n`;
+    }
+
+    await bot.sendMessage(chatId, msg1, { parse_mode: 'HTML' });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 2: CONFIRMATIONS
+    // ═══════════════════════════════════════════════════════════════
+    let msg2 = `<b>✅ CONFIRMATION MODULES</b>\n\n`;
+
+    const confirmations = result.confirmations || {};
+    const details = result.confirmationDetails || {};
+
+    // Natural Time Ratio
+    const ntrIcon = confirmations.naturalTimeRatio ? '✅' : '❌';
+    msg2 += `${ntrIcon} <b>Natural Time Ratio</b>\n`;
+    if (details.naturalTimeRatio?.reason) {
+      msg2 += `   <i>${details.naturalTimeRatio.reason}</i>\n`;
+    }
+    msg2 += `\n`;
+
+    // Market Breath
+    const mbIcon = confirmations.marketBreath ? '✅' : '❌';
+    msg2 += `${mbIcon} <b>Market Breath</b>\n`;
+    if (details.marketBreath?.reason) {
+      msg2 += `   <i>${details.marketBreath.reason}</i>\n`;
+    }
+    msg2 += `\n`;
+
+    // Odd-Even Impulse
+    const oeIcon = confirmations.oddEvenImpulse ? '✅' : '❌';
+    msg2 += `${oeIcon} <b>Odd-Even Impulse</b>\n`;
+    if (details.oddEvenImpulse?.reason) {
+      msg2 += `   <i>${details.oddEvenImpulse.reason}</i>\n`;
+    }
+    msg2 += `\n`;
+
+    // Time-Price Equality
+    const tpeIcon = confirmations.timePriceEquality ? '✅' : '❌';
+    msg2 += `${tpeIcon} <b>Time-Price Equality</b>\n`;
+    if (details.timePriceEquality?.reason) {
+      msg2 += `   <i>${details.timePriceEquality.reason}</i>\n`;
+    }
+    msg2 += `\n`;
+
+    // Midnight Memory
+    const mmIcon = confirmations.midnightMemory ? '✅' : '❌';
+    msg2 += `${mmIcon} <b>Midnight Memory</b>\n`;
+    if (details.midnightMemory?.reason) {
+      msg2 += `   <i>${details.midnightMemory.reason}</i>\n`;
+    }
+
+    await bot.sendMessage(chatId, msg2, { parse_mode: 'HTML' });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 3: AI EXPLANATION (Crystal Clear Guidance)
+    // ═══════════════════════════════════════════════════════════════
+    let msg3 = `<b>🤖 AI ANALYSIS</b>\n`;
+    msg3 += `<i>Crystal Clear Trading Guidance</i>\n\n`;
+
+    if (result.aiExplanation) {
+      msg3 += result.aiExplanation;
+    } else {
+      msg3 += `<i>AI explanation unavailable. Using rule-based analysis.</i>\n\n`;
+      if (result.actionGuidance) {
+        msg3 += `<b>Guidance:</b> ${result.actionGuidance}`;
+      }
+    }
+
+    msg3 += `\n\n<code>─────────────────────</code>\n`;
+    msg3 += `<i>Quant Engine v1.0 | /model1 for Classic</i>`;
+
+    await bot.sendMessage(chatId, msg3, { parse_mode: 'HTML' });
+
+  } catch (error) {
+    logger.error('Quant Engine error', { error: error.message, symbol, chatId });
+
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
+
+    let errorMsg = `⚠️ Quant Engine analysis failed for ${symbol}.\n\n`;
+    errorMsg += `Error: ${error.message}\n\n`;
+    errorMsg += `<i>Try /model1 to use Classic analysis</i>`;
 
     await bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
   }
@@ -1015,6 +1223,86 @@ async function handleExplain(bot, msg) {
 }
 
 /**
+ * Handle /model command - Show current model
+ */
+async function handleModel(bot, msg) {
+  const chatId = msg.chat.id;
+  const currentModel = await getUserModel(chatId);
+
+  const modelName = currentModel === 1 ? 'CLASSIC' : 'QUANT';
+  const modelDesc = currentModel === 1
+    ? 'Traditional Gann + Planetary analysis'
+    : 'Hybrid Multi-Confirmation Engine with AI explanations';
+
+  let modelMsg = `<b>🔧 ANALYSIS MODEL</b>\n\n`;
+  modelMsg += `Current: <b>Model ${currentModel} (${modelName})</b>\n`;
+  modelMsg += `<i>${modelDesc}</i>\n\n`;
+
+  modelMsg += `<b>Available Models:</b>\n`;
+  modelMsg += `• /model1 - Classic Gann + Planetary\n`;
+  modelMsg += `• /model2 - Quant Engine (AI-powered)\n\n`;
+
+  modelMsg += `<i>Use /gann COIN [TF] with your selected model</i>`;
+
+  await bot.sendMessage(chatId, modelMsg, { parse_mode: 'HTML' });
+}
+
+/**
+ * Handle /model1 command - Switch to Classic model
+ */
+async function handleModel1(bot, msg) {
+  const chatId = msg.chat.id;
+
+  await setUserModel(chatId, 1);
+
+  let switchMsg = `<b>✅ MODEL SWITCHED</b>\n\n`;
+  switchMsg += `Now using: <b>Model 1 - CLASSIC</b>\n\n`;
+  switchMsg += `<b>Features:</b>\n`;
+  switchMsg += `• Gann Square of 9 & Wheel of 24\n`;
+  switchMsg += `• Planetary price levels\n`;
+  switchMsg += `• Lunar cycle zones\n`;
+  switchMsg += `• Price-Time Square alignment\n`;
+  switchMsg += `• Reversal zones with confluence\n\n`;
+  switchMsg += `<i>Use /gann COIN [TF] for analysis</i>`;
+
+  await bot.sendMessage(chatId, switchMsg, { parse_mode: 'HTML' });
+}
+
+/**
+ * Handle /model2 command - Switch to Quant Engine
+ */
+async function handleModel2(bot, msg) {
+  const chatId = msg.chat.id;
+
+  if (!quantEngine) {
+    await bot.sendMessage(chatId,
+      '⚠️ Quant Engine module not available. Please try again later.',
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  await setUserModel(chatId, 2);
+
+  let switchMsg = `<b>✅ MODEL SWITCHED</b>\n\n`;
+  switchMsg += `Now using: <b>Model 2 - QUANT ENGINE</b>\n\n`;
+  switchMsg += `<b>Features:</b>\n`;
+  switchMsg += `• Daily + Intraday dual-layer analysis\n`;
+  switchMsg += `• Wheel of 24 time sensitivity\n`;
+  switchMsg += `• Natural Time Ratios (Fibonacci)\n`;
+  switchMsg += `• Market Breath (compression/expansion)\n`;
+  switchMsg += `• Odd-Even Impulse exhaustion\n`;
+  switchMsg += `• Time-Price Equality\n`;
+  switchMsg += `• Midnight Memory anchoring\n`;
+  switchMsg += `• <b>Gemini AI explanations</b>\n\n`;
+  switchMsg += `<b>Decision Output:</b>\n`;
+  switchMsg += `🟢 ACTIONABLE | 🟡 WAIT | ⚪ IGNORE\n\n`;
+  switchMsg += `<i>Use /gann COIN [TF] for analysis</i>`;
+
+  await bot.sendMessage(chatId, switchMsg, { parse_mode: 'HTML' });
+}
+
+/**
  * Handle unknown command
  */
 async function handleUnknown(bot, msg) {
@@ -1042,7 +1330,10 @@ const commands = {
   coin: handleCoin,
   test: handleTest,
   scan: handleScan,
-  explain: handleExplain
+  explain: handleExplain,
+  model: handleModel,
+  model1: handleModel1,
+  model2: handleModel2
 };
 
 /**
@@ -1096,6 +1387,7 @@ module.exports = {
   handleHelp,
   handleStatus,
   handleGann,
+  handleGannModel2,
   handlePlanets,
   handleConfluence,
   handleLevels,
@@ -1104,7 +1396,12 @@ module.exports = {
   handleTest,
   handleScan,
   handleExplain,
+  handleModel,
+  handleModel1,
+  handleModel2,
   // Helpers
   getCurrentPrice,
-  getHistoricalEvents
+  getHistoricalEvents,
+  getUserModel,
+  setUserModel
 };

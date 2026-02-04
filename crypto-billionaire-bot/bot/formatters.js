@@ -494,11 +494,16 @@ function formatHelp() {
   return `<b>🤖 CRYPTO BILLIONAIRE BOT</b>
 
 <b>Main Commands:</b>
-/gann [COIN] [TF] - Gann + Planetary analysis
+/gann [COIN] [TF] - Gann analysis
   <i>Example: /gann XRP 1D, /gann BTC 4H</i>
 /coin [SYMBOL] - Simplified coin analysis
 /scan - Scan ALL tickers for reversals
 /status - Current BTC + system status
+
+<b>Model Selection:</b>
+/model - View current model
+/model1 - Classic (Gann + Planetary)
+/model2 - Quant Engine (AI-powered)
 
 <b>Info Commands:</b>
 /planets - Planetary positions
