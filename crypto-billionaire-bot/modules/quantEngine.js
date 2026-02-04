@@ -108,12 +108,21 @@ async function buildDailyContext(symbol) {
       low: parseFloat(k[3]),
       close: parseFloat(k[4]),
       volume: parseFloat(k[5])
-    }));
+    })).filter(c => !isNaN(c.open) && !isNaN(c.close) && c.open > 0 && c.close > 0);
+
+    if (candles.length < 2) {
+      throw new Error('Invalid candle data - prices are not valid numbers');
+    }
 
     // Today's candle (forming)
     const today = candles[0];
     // Previous day (completed)
     const yesterday = candles[1];
+
+    // Validate prices
+    if (!today.open || !today.close || isNaN(today.open) || isNaN(today.close)) {
+      throw new Error('Invalid today candle data');
+    }
 
     // Calculate ATR for breath analysis
     const atrValues = [];
@@ -125,13 +134,19 @@ async function buildDailyContext(symbol) {
       );
       atrValues.push(tr);
     }
-    const avgATR = atrValues.reduce((a, b) => a + b, 0) / atrValues.length;
+    const avgATR = atrValues.length > 0 ? atrValues.reduce((a, b) => a + b, 0) / atrValues.length : today.high - today.low;
 
     // Daily bias determination
     const dailyBias = determineDailyBias(today, yesterday, candles.slice(0, 5));
 
     // Square of 9 levels from daily base
     const basePrice = today.open;  // Midnight open is the anchor
+
+    // Validate basePrice before Gann calculation
+    if (!basePrice || isNaN(basePrice) || basePrice <= 0) {
+      throw new Error(`Invalid base price: ${basePrice}`);
+    }
+
     const sq9 = gann.squareOf9(basePrice);
 
     // Wheel of 24 time windows for today
@@ -372,10 +387,19 @@ async function analyzeIntraday(symbol, dailyContext) {
       low: parseFloat(k[3]),
       close: parseFloat(k[4]),
       volume: parseFloat(k[5])
-    }));
+    })).filter(c => !isNaN(c.open) && !isNaN(c.close) && c.open > 0 && c.close > 0);
+
+    if (candles.length < 10) {
+      throw new Error('Insufficient valid hourly candle data');
+    }
 
     const current = candles[0];
     const currentPrice = current.close;
+
+    // Validate current price
+    if (!currentPrice || isNaN(currentPrice) || currentPrice <= 0) {
+      throw new Error(`Invalid current price: ${currentPrice}`);
+    }
     const currentTime = new Date(current.timestamp);
 
     // ─────────────────────────────────────────────────────────
@@ -502,9 +526,20 @@ function checkPriceLocation(price, dailyContext) {
   const zones = [];
   let primaryZone = 'NEUTRAL';
 
+  // Validate price
+  if (!price || isNaN(price) || price <= 0) {
+    return {
+      confirmed: false,
+      zone: 'NEUTRAL',
+      zones: [],
+      reason: 'Invalid price for zone calculation',
+      isAtDecisionZone: false
+    };
+  }
+
   // Check Square of 9 zone
   const sq9 = gann.squareOf9(price);
-  const degPos = sq9.degreePosition;
+  const degPos = sq9.degreePosition || 0;
   const nearCardinal = CONFIG.PRICE_ZONES.SIGNIFICANT_ANGLES.some(angle => {
     const diff = Math.abs(degPos - angle);
     return Math.min(diff, 360 - diff) <= CONFIG.PRICE_ZONES.CARDINAL_TOLERANCE_DEG;
