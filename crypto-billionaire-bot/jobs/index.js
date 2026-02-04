@@ -11,6 +11,7 @@ const weeklyWarRoom = require('./weekly-war-room');
 const alertScanner = require('./alert-scanner');
 const outcomeLabeler = require('./outcome-labeler');
 const weeklyCalibration = require('./weekly-calibration');
+const reversalScanner = require('./reversal-scanner');
 
 // ============================================================
 // JOB REGISTRY
@@ -21,7 +22,8 @@ const jobs = {
   weeklyWarRoom,
   alertScanner,
   outcomeLabeler,
-  weeklyCalibration
+  weeklyCalibration,
+  reversalScanner
 };
 
 // ============================================================

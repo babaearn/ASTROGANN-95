@@ -12,13 +12,14 @@ const confluence = require('../modules/confluence');
 const db = require('../database/models');
 
 // Market data modules (may not be available)
-let bybit, coingecko, marketRadar, coinAnalysis, planetaryPrice;
+let bybit, coingecko, marketRadar, coinAnalysis, planetaryPrice, reversalScanner;
 try {
   bybit = require('../modules/bybit');
   coingecko = require('../modules/coingecko');
   marketRadar = require('../modules/marketRadar');
   coinAnalysis = require('../modules/coinAnalysis');
   planetaryPrice = require('../modules/planetaryPrice');
+  reversalScanner = require('../modules/reversalScanner');
 } catch (e) {
   logger.warn('Some market modules not available', { error: e.message });
 }
@@ -665,6 +666,152 @@ async function handleTest(bot, msg) {
 }
 
 /**
+ * Handle /scan command - Scan all Bybit tickers for reversals
+ */
+async function handleScan(bot, msg) {
+  const chatId = msg.chat.id;
+
+  if (!reversalScanner) {
+    await bot.sendMessage(chatId, '⚠️ Reversal scanner module not available.');
+    return;
+  }
+
+  const loadingMsg = await bot.sendMessage(chatId,
+    '🔍 <b>Scanning all Bybit perpetuals for reversals...</b>\n\nAnalyzing Gann, Planetary, Price-Time alignments...',
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    const scanResult = await reversalScanner.scanAllTickers({
+      minScore: 30,
+      maxResults: 10
+    });
+
+    // Delete loading message
+    try {
+      await bot.deleteMessage(chatId, loadingMsg.message_id);
+    } catch (e) {}
+
+    // Format summary
+    let msg = `<b>🔍 REVERSAL SCAN RESULTS</b>\n`;
+    msg += `<code>${formatters.formatTime(new Date())}</code>\n\n`;
+    msg += `Tickers scanned: <b>${scanResult.tickersScanned}</b>\n`;
+    msg += `Reversals found: <b>${scanResult.reversalsFound}</b>\n`;
+    msg += `Scan time: ${scanResult.scanDurationMs}ms\n\n`;
+
+    if (scanResult.results.length === 0) {
+      msg += `<i>No high-confluence reversals detected.</i>\n\n`;
+      msg += `Try again later or lower the threshold.`;
+      await bot.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+      return;
+    }
+
+    msg += `<b>🎯 TOP REVERSAL OPPORTUNITIES:</b>\n\n`;
+
+    scanResult.results.forEach((r, i) => {
+      const emoji = r.reversalScore.rating === 'HIGH' ? '🔴' : r.reversalScore.rating === 'MEDIUM' ? '🟡' : '⚪';
+      const priceStr = r.price < 1
+        ? `$${r.price.toFixed(6)}`
+        : `$${r.price.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+
+      msg += `${i + 1}. ${emoji} <b>${r.baseCoin}</b> - Score: ${r.reversalScore.percentage}%\n`;
+      msg += `   ${priceStr} (${r.change24h >= 0 ? '+' : ''}${r.change24h.toFixed(1)}%)\n`;
+
+      // Show factors
+      r.reversalScore.factors.slice(0, 2).forEach(f => {
+        msg += `   • ${f}\n`;
+      });
+      msg += `\n`;
+    });
+
+    // Add explanation
+    msg += `<b>📐 LEGEND:</b>\n`;
+    msg += `🔴 HIGH (60%+) = Strong reversal zone\n`;
+    msg += `🟡 MEDIUM (40-59%) = Watch for confirmation\n`;
+    msg += `⚪ LOW (<40%) = Minor signal\n\n`;
+
+    msg += `<i>Use /coin [SYMBOL] for detailed analysis</i>`;
+
+    await bot.sendMessage(chatId, msg, { parse_mode: 'HTML' });
+
+    // Also check Price-Time alignments
+    const ptAlignments = await reversalScanner.scanPriceTimeAlignments();
+    if (ptAlignments.alignments.length > 0) {
+      let ptMsg = `\n<b>⏰ PRICE-TIME SQUARE ALIGNMENTS</b>\n`;
+      ptMsg += `<i>Gann's most powerful reversal signal</i>\n\n`;
+
+      ptAlignments.alignments.slice(0, 5).forEach(a => {
+        ptMsg += `<b>${a.baseCoin}</b>: ${a.daysSince}d × ${a.multiplier} = $${a.targetPrice.toLocaleString()}\n`;
+        ptMsg += `   From: ${a.event} | Accuracy: ${a.accuracy}\n\n`;
+      });
+
+      await bot.sendMessage(chatId, ptMsg, { parse_mode: 'HTML' });
+    }
+
+  } catch (error) {
+    logger.error('Scan command error', { error: error.message, chatId });
+
+    try {
+      await bot.deleteMessage(chatId, loadingMsg.message_id);
+    } catch (e) {}
+
+    await bot.sendMessage(chatId,
+      `⚠️ Scan failed: ${error.message}`,
+      { parse_mode: 'HTML' }
+    );
+  }
+}
+
+/**
+ * Handle /explain command - Explain Gann methods
+ */
+async function handleExplain(bot, msg) {
+  const chatId = msg.chat.id;
+
+  if (!reversalScanner) {
+    await bot.sendMessage(chatId, '⚠️ Module not available.');
+    return;
+  }
+
+  const explanation = reversalScanner.getGannExplanation();
+
+  let msg1 = `<b>📚 GANN METHODS EXPLAINED</b>\n\n`;
+
+  // Square of 9
+  msg1 += `<b>🔢 ${explanation.squareOf9.title}</b>\n`;
+  msg1 += `${explanation.squareOf9.description}\n\n`;
+  msg1 += `<b>Key Points:</b>\n`;
+  explanation.squareOf9.keyPoints.forEach(p => {
+    msg1 += `• ${p}\n`;
+  });
+  msg1 += `\n<b>Trading:</b> ${explanation.squareOf9.trading}\n\n`;
+
+  // Wheel of 24
+  msg1 += `<b>🎡 ${explanation.wheelOf24.title}</b>\n`;
+  msg1 += `${explanation.wheelOf24.description}\n\n`;
+  msg1 += `<b>Quadrants:</b>\n`;
+  explanation.wheelOf24.quadrants.forEach(q => {
+    msg1 += `• ${q}\n`;
+  });
+  msg1 += `\n<b>Trading:</b> ${explanation.wheelOf24.trading}`;
+
+  await bot.sendMessage(chatId, msg1, { parse_mode: 'HTML' });
+
+  // Price-Time Square (separate message)
+  let msg2 = `<b>⏰ ${explanation.priceTimeSquare.title}</b>\n`;
+  msg2 += `<i>The Billionaire's Secret</i>\n\n`;
+  msg2 += `${explanation.priceTimeSquare.description}\n\n`;
+  msg2 += `<b>Method:</b>\n`;
+  explanation.priceTimeSquare.method.forEach((m, i) => {
+    msg2 += `${i + 1}. ${m}\n`;
+  });
+  msg2 += `\n<b>Example:</b>\n${explanation.priceTimeSquare.example}\n\n`;
+  msg2 += `<i>This is how Gann predicted exact tops/bottoms decades in advance.</i>`;
+
+  await bot.sendMessage(chatId, msg2, { parse_mode: 'HTML' });
+}
+
+/**
  * Handle unknown command
  */
 async function handleUnknown(bot, msg) {
@@ -690,7 +837,9 @@ const commands = {
   levels: handleLevels,
   cycles: handleCycles,
   coin: handleCoin,
-  test: handleTest
+  test: handleTest,
+  scan: handleScan,
+  explain: handleExplain
 };
 
 /**
@@ -750,6 +899,8 @@ module.exports = {
   handleCycles,
   handleCoin,
   handleTest,
+  handleScan,
+  handleExplain,
   // Helpers
   getCurrentPrice,
   getHistoricalEvents
