@@ -493,23 +493,30 @@ function formatError(error, context = '') {
 function formatHelp() {
   return `<b>🤖 CRYPTO BILLIONAIRE BOT</b>
 
-<b>Commands:</b>
-/status - Current BTC analysis
-/gann - Gann Square of 9 & Wheel
+<b>Main Commands:</b>
+/gann [COIN] [TF] - Gann + Planetary analysis
+  <i>Example: /gann XRP 1D, /gann BTC 4H</i>
+/coin [SYMBOL] - Simplified coin analysis
+/scan - Scan ALL tickers for reversals
+/status - Current BTC + system status
+
+<b>Info Commands:</b>
 /planets - Planetary positions
 /confluence - Confluence score
 /levels - Key support/resistance
-/coin [SYMBOL] - Full A-Z analysis
+/explain - Learn Gann methods
 /test - Test all modules & APIs
 /help - This help message
+
+<b>Timeframes:</b>
+5M, 15M, 30M, 1H, 2H, 4H, 1D, 1W
 
 <b>Scheduled:</b>
 • Daily Briefing: 5:30 AM IST
 • Weekly War Room: Sat 6:00 PM IST
-• Alerts: On high confluence only
+• Reversal Alerts: Every 30 min
 
-<b>Note:</b> This is for analysis only.
-Not financial advice. DYOR.`;
+<b>Note:</b> Analysis only. Not financial advice.`;
 }
 
 /**
