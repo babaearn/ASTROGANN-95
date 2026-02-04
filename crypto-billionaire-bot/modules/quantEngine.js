@@ -100,24 +100,21 @@ async function buildDailyContext(symbol) {
       throw new Error('Insufficient daily data');
     }
 
-    // Sort by timestamp (newest first in Bybit)
-    const candles = dailyKlines.list.map(k => ({
-      timestamp: parseInt(k[0]),
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5])
-    })).filter(c => !isNaN(c.open) && !isNaN(c.close) && c.open > 0 && c.close > 0);
+    // Bybit module already parses data into objects with: timestamp, open, high, low, close, volume
+    // Filter out invalid candles
+    const candles = dailyKlines.list.filter(c =>
+      c && typeof c.open === 'number' && typeof c.close === 'number' &&
+      !isNaN(c.open) && !isNaN(c.close) && c.open > 0 && c.close > 0
+    );
 
     if (candles.length < 2) {
       throw new Error('Invalid candle data - prices are not valid numbers');
     }
 
-    // Today's candle (forming)
-    const today = candles[0];
-    // Previous day (completed)
-    const yesterday = candles[1];
+    // Bybit module returns data in chronological order (oldest first after .reverse())
+    // So newest candle is at the end
+    const today = candles[candles.length - 1];
+    const yesterday = candles[candles.length - 2];
 
     // Validate prices
     if (!today.open || !today.close || isNaN(today.open) || isNaN(today.close)) {
@@ -136,8 +133,9 @@ async function buildDailyContext(symbol) {
     }
     const avgATR = atrValues.length > 0 ? atrValues.reduce((a, b) => a + b, 0) / atrValues.length : today.high - today.low;
 
-    // Daily bias determination
-    const dailyBias = determineDailyBias(today, yesterday, candles.slice(0, 5));
+    // Daily bias determination (use most recent 5 candles)
+    const recentForBias = candles.slice(-5);
+    const dailyBias = determineDailyBias(today, yesterday, recentForBias);
 
     // Square of 9 levels from daily base
     const basePrice = today.open;  // Midnight open is the anchor
@@ -156,8 +154,8 @@ async function buildDailyContext(symbol) {
     const pdh = yesterday.high;
     const pdl = yesterday.low;
 
-    // Find significant swing points from recent history
-    const swingPoints = findSwingPoints(candles.slice(0, 20));
+    // Find significant swing points from recent history (use last 20 candles)
+    const swingPoints = findSwingPoints(candles.slice(-20));
 
     const context = {
       symbol,
@@ -195,8 +193,8 @@ async function buildDailyContext(symbol) {
       // Swing reference
       swingPoints,
 
-      // Raw data for conditioning modules
-      recentCandles: candles.slice(0, 10)
+      // Raw data for conditioning modules (last 10 candles, newest last)
+      recentCandles: candles.slice(-10)
     };
 
     logger.info('Daily context built', {
@@ -380,20 +378,19 @@ async function analyzeIntraday(symbol, dailyContext) {
       throw new Error('Insufficient hourly data');
     }
 
-    const candles = hourlyKlines.list.map(k => ({
-      timestamp: parseInt(k[0]),
-      open: parseFloat(k[1]),
-      high: parseFloat(k[2]),
-      low: parseFloat(k[3]),
-      close: parseFloat(k[4]),
-      volume: parseFloat(k[5])
-    })).filter(c => !isNaN(c.open) && !isNaN(c.close) && c.open > 0 && c.close > 0);
+    // Bybit module already parses data into objects
+    const candles = hourlyKlines.list.filter(c =>
+      c && typeof c.open === 'number' && typeof c.close === 'number' &&
+      !isNaN(c.open) && !isNaN(c.close) && c.open > 0 && c.close > 0
+    );
 
     if (candles.length < 10) {
       throw new Error('Insufficient valid hourly candle data');
     }
 
-    const current = candles[0];
+    // Bybit module returns chronological order (oldest first after .reverse())
+    // So newest candle is at the end
+    const current = candles[candles.length - 1];
     const currentPrice = current.close;
 
     // Validate current price
