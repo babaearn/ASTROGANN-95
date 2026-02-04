@@ -496,6 +496,8 @@ function formatHelp() {
 <b>Main Commands:</b>
 /gann [COIN] [TF] - Gann analysis
   <i>Example: /gann XRP 1D, /gann BTC 4H</i>
+/time [COIN] [MODE] - Time ratio analysis
+  <i>Example: /time BTC 0, /time ETH 1D</i>
 /coin [SYMBOL] - Simplified coin analysis
 /scan - Scan ALL tickers for reversals
 /status - Current BTC + system status
@@ -513,13 +515,15 @@ function formatHelp() {
 /test - Test all modules & APIs
 /help - This help message
 
+<b>Time Modes:</b>
+0 = From ATH, 1D = Daily, 4H, 1H
+
 <b>Timeframes:</b>
 5M, 15M, 30M, 1H, 2H, 4H, 1D, 1W
 
 <b>Scheduled:</b>
 • Daily Briefing: 5:30 AM IST
 • Weekly War Room: Sat 6:00 PM IST
-• Reversal Alerts: Every 30 min
 
 <b>Note:</b> Analysis only. Not financial advice.`;
 }

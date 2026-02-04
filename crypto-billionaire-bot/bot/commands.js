@@ -1238,6 +1238,326 @@ async function handleExplain(bot, msg) {
 }
 
 /**
+ * Handle /time command - Deep Natural Time Ratio Analysis
+ * Usage: /time COIN 0 (from ATH), /time COIN 1D, /time COIN 1H, /time COIN 4H
+ */
+async function handleTime(bot, msg) {
+  const chatId = msg.chat.id;
+
+  // Parse command: /time [SYMBOL] [MODE]
+  const text = msg.text || '';
+  const parts = text.split(/\s+/);
+  const symbolInput = parts[1];
+  const modeInput = (parts[2] || '1D').toUpperCase();
+
+  // Show usage if no symbol
+  if (!symbolInput) {
+    await bot.sendMessage(chatId,
+      `<b>⏰ NATURAL TIME RATIO ANALYSIS</b>\n\n` +
+      `Usage: <code>/time COIN MODE</code>\n\n` +
+      `<b>Modes:</b>\n` +
+      `• <code>/time BTC 0</code> - From All-Time High\n` +
+      `• <code>/time BTC 1D</code> - Daily swings\n` +
+      `• <code>/time BTC 4H</code> - 4H swings\n` +
+      `• <code>/time BTC 1H</code> - 1H intraday swings\n\n` +
+      `<b>What it shows:</b>\n` +
+      `• Last major swing (High → Low or Low → High)\n` +
+      `• Move duration in bars/days\n` +
+      `• Fibonacci time extensions (0.382, 0.5, 0.618, 1.0, 1.618, 2.618)\n` +
+      `• <b>EXACT dates</b> for each reversal target\n\n` +
+      `<i>Gann's principle: "Time is more important than price"</i>`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  const symbol = symbolInput.toUpperCase();
+  const bybitSymbol = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`;
+
+  // Mode configuration
+  const MODE_CONFIG = {
+    '0': { interval: 'D', limit: 365, name: 'From ATH', barUnit: 'days', isATH: true },
+    '1D': { interval: 'D', limit: 200, name: 'Daily', barUnit: 'days', isATH: false },
+    '4H': { interval: '240', limit: 200, name: '4H', barUnit: '4H bars', isATH: false },
+    '1H': { interval: '60', limit: 200, name: '1H Intraday', barUnit: 'hours', isATH: false }
+  };
+
+  const mode = MODE_CONFIG[modeInput] || MODE_CONFIG['1D'];
+
+  const loadingMsg = await bot.sendMessage(chatId,
+    `⏰ Analyzing <b>${symbol}</b> Natural Time Ratios...\n\n<i>Mode: ${mode.name}</i>`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    if (!bybit) {
+      throw new Error('Bybit module not available');
+    }
+
+    // Fetch candles
+    const klines = await bybit.bybitClient.getKlineData({
+      symbol: bybitSymbol,
+      interval: mode.interval,
+      limit: mode.limit
+    });
+
+    if (!klines?.list || klines.list.length < 20) {
+      throw new Error('Insufficient data');
+    }
+
+    const candles = klines.list.filter(c =>
+      c && typeof c.open === 'number' && !isNaN(c.close) && c.close > 0
+    );
+
+    // Find swings
+    const { swingHigh, swingLow, currentPrice, athData } = findMajorSwings(candles, mode.isATH);
+
+    // Delete loading message
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
+
+    // Calculate bar duration in milliseconds
+    const barDurationMs = mode.interval === 'D' ? 24 * 60 * 60 * 1000 :
+                          mode.interval === '240' ? 4 * 60 * 60 * 1000 :
+                          mode.interval === '60' ? 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 1: SWING ANALYSIS
+    // ═══════════════════════════════════════════════════════════════
+    let msg1 = `<b>⏰ ${symbol} NATURAL TIME RATIO ANALYSIS</b>\n`;
+    msg1 += `<code>${formatters.formatTime(new Date())} | ${mode.name}</code>\n\n`;
+
+    msg1 += `<b>💰 Current Price:</b> ${formatters.formatCoinPrice(currentPrice, symbol)}\n\n`;
+
+    // Show ATH info if mode is ATH
+    if (mode.isATH && athData) {
+      msg1 += `<b>🏔️ ALL-TIME HIGH</b>\n`;
+      msg1 += `Price: ${formatters.formatCoinPrice(athData.price, symbol)}\n`;
+      msg1 += `Date: <b>${athData.date}</b>\n`;
+      msg1 += `Days ago: <b>${athData.barsAgo}</b>\n`;
+      msg1 += `Drop from ATH: <b>${((1 - currentPrice / athData.price) * 100).toFixed(1)}%</b>\n\n`;
+    }
+
+    // Swing High Info
+    msg1 += `<b>📈 LAST SWING HIGH</b>\n`;
+    msg1 += `Price: ${formatters.formatCoinPrice(swingHigh.price, symbol)}\n`;
+    msg1 += `Date: <b>${swingHigh.date}</b>\n`;
+    msg1 += `${mode.barUnit} ago: <b>${swingHigh.barsAgo}</b>\n\n`;
+
+    // Swing Low Info
+    msg1 += `<b>📉 LAST SWING LOW</b>\n`;
+    msg1 += `Price: ${formatters.formatCoinPrice(swingLow.price, symbol)}\n`;
+    msg1 += `Date: <b>${swingLow.date}</b>\n`;
+    msg1 += `${mode.barUnit} ago: <b>${swingLow.barsAgo}</b>\n\n`;
+
+    // Determine the move to analyze
+    const isUpMove = swingLow.barsAgo > swingHigh.barsAgo;
+    const moveStart = isUpMove ? swingLow : swingHigh;
+    const moveEnd = isUpMove ? swingHigh : swingLow;
+    const moveDuration = Math.abs(moveStart.barsAgo - moveEnd.barsAgo);
+    const moveDirection = isUpMove ? '📈 UP' : '📉 DOWN';
+
+    msg1 += `<b>🔄 ANALYZED MOVE</b>\n`;
+    msg1 += `Direction: <b>${moveDirection}</b>\n`;
+    msg1 += `From: ${formatters.formatCoinPrice(moveStart.price, symbol)} (${moveStart.date})\n`;
+    msg1 += `To: ${formatters.formatCoinPrice(moveEnd.price, symbol)} (${moveEnd.date})\n`;
+    msg1 += `Duration: <b>${moveDuration} ${mode.barUnit}</b>\n`;
+
+    await bot.sendMessage(chatId, msg1, { parse_mode: 'HTML' });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 2: FIBONACCI TIME EXTENSIONS
+    // ═══════════════════════════════════════════════════════════════
+    const RATIOS = [0.382, 0.5, 0.618, 1.0, 1.272, 1.618, 2.0, 2.618];
+    const now = new Date();
+    const moveEndTime = new Date(moveEnd.timestamp);
+
+    let msg2 = `<b>📐 FIBONACCI TIME EXTENSIONS</b>\n`;
+    msg2 += `<i>From the end of the ${moveDuration}-${mode.barUnit} move</i>\n\n`;
+
+    msg2 += `<b>Move ended:</b> ${moveEnd.date}\n`;
+    msg2 += `<b>Move duration:</b> ${moveDuration} ${mode.barUnit}\n\n`;
+
+    msg2 += `<b>🎯 REVERSAL TIME TARGETS:</b>\n\n`;
+
+    for (const ratio of RATIOS) {
+      const targetBars = Math.round(moveDuration * ratio);
+      const targetTime = new Date(moveEndTime.getTime() + (targetBars * barDurationMs));
+      const barsFromNow = Math.round((targetTime.getTime() - now.getTime()) / barDurationMs);
+
+      // Format the date nicely
+      const targetDateStr = targetTime.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric'
+      });
+
+      const targetTimeStr = mode.interval !== 'D' ?
+        targetTime.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC' : '';
+
+      // Status emoji
+      let statusEmoji, statusText;
+      if (barsFromNow < -2) {
+        statusEmoji = '✅';
+        statusText = `PASSED (${Math.abs(barsFromNow)} ${mode.barUnit} ago)`;
+      } else if (barsFromNow >= -2 && barsFromNow <= 2) {
+        statusEmoji = '🔴';
+        statusText = `NOW! Watch for reversal`;
+      } else {
+        statusEmoji = '⏳';
+        statusText = `in ${barsFromNow} ${mode.barUnit}`;
+      }
+
+      msg2 += `${statusEmoji} <b>${ratio}x</b> = ${targetBars} ${mode.barUnit}\n`;
+      msg2 += `   📅 <b>${targetDateStr}</b> ${targetTimeStr}\n`;
+      msg2 += `   <i>${statusText}</i>\n\n`;
+    }
+
+    await bot.sendMessage(chatId, msg2, { parse_mode: 'HTML' });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 3: EXPLANATION
+    // ═══════════════════════════════════════════════════════════════
+    let msg3 = `<b>📚 HOW TO USE THIS</b>\n\n`;
+
+    msg3 += `<b>The Gann Principle:</b>\n`;
+    msg3 += `<i>"When TIME and PRICE balance, a change in trend is due."</i>\n\n`;
+
+    msg3 += `<b>Key Ratios:</b>\n`;
+    msg3 += `• <b>0.382</b> - First minor retracement in time\n`;
+    msg3 += `• <b>0.5</b> - Half-way point (important)\n`;
+    msg3 += `• <b>0.618</b> - Golden ratio (major)\n`;
+    msg3 += `• <b>1.0</b> - Equal time (very important)\n`;
+    msg3 += `• <b>1.618</b> - Golden extension (major)\n`;
+    msg3 += `• <b>2.618</b> - Extended cycle\n\n`;
+
+    msg3 += `<b>Trading Rules:</b>\n`;
+    msg3 += `1️⃣ Time does NOT predict direction\n`;
+    msg3 += `2️⃣ Time only tells you WHEN to pay attention\n`;
+    msg3 += `3️⃣ At ratio dates, look for PRICE confirmation:\n`;
+    msg3 += `   • Sq9 cardinal angles\n`;
+    msg3 += `   • Support/Resistance levels\n`;
+    msg3 += `   • Candlestick patterns\n\n`;
+
+    msg3 += `<b>🔴 NOW targets = High probability reversal zones</b>\n`;
+    msg3 += `<i>Combine with /gann for complete analysis</i>`;
+
+    await bot.sendMessage(chatId, msg3, { parse_mode: 'HTML' });
+
+  } catch (error) {
+    logger.error('Time command error', { error: error.message, symbol, chatId });
+
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
+
+    let errorMsg = `⚠️ Time analysis failed for ${symbol}.\n\n`;
+    errorMsg += `Error: ${error.message}\n\n`;
+    errorMsg += `<i>Make sure the symbol exists on Bybit</i>`;
+
+    await bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
+  }
+}
+
+/**
+ * Find major swing highs and lows from candle data
+ */
+function findMajorSwings(candles, findATH = false) {
+  // Candles are in chronological order (oldest first after Bybit module reverse)
+  const currentCandle = candles[candles.length - 1];
+  const currentPrice = currentCandle.close;
+
+  let athData = null;
+  let highestPrice = 0;
+  let highestIndex = 0;
+  let lowestPrice = Infinity;
+  let lowestIndex = 0;
+
+  // Find ATH and ATL in the dataset
+  for (let i = 0; i < candles.length; i++) {
+    if (candles[i].high > highestPrice) {
+      highestPrice = candles[i].high;
+      highestIndex = i;
+    }
+    if (candles[i].low < lowestPrice) {
+      lowestPrice = candles[i].low;
+      lowestIndex = i;
+    }
+  }
+
+  // ATH data
+  if (findATH) {
+    const athCandle = candles[highestIndex];
+    athData = {
+      price: highestPrice,
+      timestamp: athCandle.timestamp,
+      date: new Date(athCandle.timestamp).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      }),
+      barsAgo: candles.length - 1 - highestIndex
+    };
+  }
+
+  // Find significant swing high (local maximum)
+  let swingHighIndex = highestIndex;
+  let swingHighPrice = highestPrice;
+
+  // Find significant swing low (local minimum)
+  let swingLowIndex = lowestIndex;
+  let swingLowPrice = lowestPrice;
+
+  // Look for more recent significant swings (within last 50% of data)
+  const recentStart = Math.floor(candles.length * 0.3);
+
+  for (let i = recentStart; i < candles.length - 5; i++) {
+    // Check for swing high (higher than 5 bars before and after)
+    let isSwingHigh = true;
+    let isSwingLow = true;
+
+    for (let j = 1; j <= 5; j++) {
+      if (i - j >= 0 && candles[i].high <= candles[i - j].high) isSwingHigh = false;
+      if (i + j < candles.length && candles[i].high <= candles[i + j].high) isSwingHigh = false;
+      if (i - j >= 0 && candles[i].low >= candles[i - j].low) isSwingLow = false;
+      if (i + j < candles.length && candles[i].low >= candles[i + j].low) isSwingLow = false;
+    }
+
+    if (isSwingHigh && candles[i].high > swingHighPrice * 0.95) {
+      swingHighIndex = i;
+      swingHighPrice = candles[i].high;
+    }
+
+    if (isSwingLow && candles[i].low < swingLowPrice * 1.05) {
+      swingLowIndex = i;
+      swingLowPrice = candles[i].low;
+    }
+  }
+
+  const swingHighCandle = candles[swingHighIndex];
+  const swingLowCandle = candles[swingLowIndex];
+
+  return {
+    swingHigh: {
+      price: swingHighPrice,
+      timestamp: swingHighCandle.timestamp,
+      date: new Date(swingHighCandle.timestamp).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      }),
+      barsAgo: candles.length - 1 - swingHighIndex,
+      index: swingHighIndex
+    },
+    swingLow: {
+      price: swingLowPrice,
+      timestamp: swingLowCandle.timestamp,
+      date: new Date(swingLowCandle.timestamp).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric'
+      }),
+      barsAgo: candles.length - 1 - swingLowIndex,
+      index: swingLowIndex
+    },
+    currentPrice,
+    athData
+  };
+}
+
+/**
  * Handle /model command - Show current model
  */
 async function handleModel(bot, msg) {
@@ -1338,6 +1658,7 @@ const commands = {
   help: handleHelp,
   status: handleStatus,
   gann: handleGann,
+  time: handleTime,
   planets: handlePlanets,
   confluence: handleConfluence,
   levels: handleLevels,
@@ -1356,7 +1677,7 @@ const commands = {
  */
 function registerCommands(bot) {
   // Commands that take parameters
-  const paramCommands = ['coin', 'gann'];
+  const paramCommands = ['coin', 'gann', 'time'];
 
   // Register each command
   Object.entries(commands).forEach(([command, handler]) => {
@@ -1403,6 +1724,7 @@ module.exports = {
   handleStatus,
   handleGann,
   handleGannModel2,
+  handleTime,
   handlePlanets,
   handleConfluence,
   handleLevels,
@@ -1418,5 +1740,6 @@ module.exports = {
   getCurrentPrice,
   getHistoricalEvents,
   getUserModel,
-  setUserModel
+  setUserModel,
+  findMajorSwings
 };
