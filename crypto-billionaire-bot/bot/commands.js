@@ -1558,6 +1558,299 @@ function findMajorSwings(candles, findATH = false) {
 }
 
 /**
+ * Handle /fibox command - Fibonacci Cycle Completion Check
+ * Checks if move duration matches a Fibonacci NUMBER (cycle completing)
+ * Usage: /fibox COIN
+ */
+async function handleFibox(bot, msg) {
+  const chatId = msg.chat.id;
+
+  // Parse command: /fibox [SYMBOL]
+  const text = msg.text || '';
+  const parts = text.split(/\s+/);
+  const symbolInput = parts[1];
+
+  // Show usage if no symbol
+  if (!symbolInput) {
+    await bot.sendMessage(chatId,
+      `<b>🔢 FIBONACCI CYCLE CHECKER</b>\n\n` +
+      `Usage: <code>/fibox COIN</code>\n\n` +
+      `<b>Examples:</b>\n` +
+      `• <code>/fibox SOL</code>\n` +
+      `• <code>/fibox BTC</code>\n` +
+      `• <code>/fibox ETH</code>\n\n` +
+      `<b>What it checks:</b>\n` +
+      `• Finds last major swing (High → Low, Low → High)\n` +
+      `• Calculates move duration in DAYS\n` +
+      `• Compares to Fibonacci NUMBERS:\n` +
+      `  <code>1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377...</code>\n\n` +
+      `<b>Why this matters:</b>\n` +
+      `W.D. Gann discovered that major market swings often last\n` +
+      `exactly a Fibonacci number of days. When a move reaches\n` +
+      `a Fib number, the cycle is COMPLETING.\n\n` +
+      `<b>🔴 ALERT</b> = Move is AT or NEAR a Fib number\n` +
+      `<i>Expect reversal or significant move continuation</i>`,
+      { parse_mode: 'HTML' }
+    );
+    return;
+  }
+
+  const symbol = symbolInput.toUpperCase();
+  const bybitSymbol = symbol.endsWith('USDT') ? symbol : `${symbol}USDT`;
+
+  const loadingMsg = await bot.sendMessage(chatId,
+    `🔢 Checking <b>${symbol}</b> Fibonacci cycles...\n\n<i>Analyzing swing durations...</i>`,
+    { parse_mode: 'HTML' }
+  );
+
+  try {
+    if (!bybit) {
+      throw new Error('Bybit module not available');
+    }
+
+    // Fetch daily candles (365 days)
+    const klines = await bybit.bybitClient.getKlineData({
+      symbol: bybitSymbol,
+      interval: 'D',
+      limit: 365
+    });
+
+    if (!klines?.list || klines.list.length < 30) {
+      throw new Error('Insufficient data');
+    }
+
+    const candles = klines.list.filter(c =>
+      c && typeof c.open === 'number' && !isNaN(c.close) && c.close > 0
+    );
+
+    // Find swings using existing helper
+    const { swingHigh, swingLow, currentPrice } = findMajorSwings(candles, false);
+
+    // Fibonacci numbers up to 987
+    const FIB_NUMBERS = [1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987];
+
+    // Helper to find nearest Fib
+    function findNearestFib(days) {
+      let nearest = FIB_NUMBERS[0];
+      let minDiff = Math.abs(days - nearest);
+
+      for (const fib of FIB_NUMBERS) {
+        const diff = Math.abs(days - fib);
+        if (diff < minDiff) {
+          minDiff = diff;
+          nearest = fib;
+        }
+      }
+
+      return { nearest, difference: days - nearest, absDiff: minDiff };
+    }
+
+    // Helper to get status
+    function getCycleStatus(days, nearestFib, absDiff) {
+      const tolerance = Math.max(2, Math.floor(nearestFib * 0.05)); // 5% or 2 days
+
+      if (absDiff === 0) {
+        return { emoji: '🔴', status: 'EXACT MATCH!', alert: true };
+      } else if (absDiff <= tolerance) {
+        return { emoji: '🟡', status: `${absDiff} days ${days > nearestFib ? 'past' : 'to'} Fib`, alert: true };
+      } else if (absDiff <= tolerance * 2) {
+        return { emoji: '🟠', status: `Approaching Fib (${absDiff} days)`, alert: false };
+      } else {
+        return { emoji: '⚪', status: `${absDiff} days from nearest Fib`, alert: false };
+      }
+    }
+
+    // Delete loading message
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 1: CYCLE OVERVIEW
+    // ═══════════════════════════════════════════════════════════════
+    let msg1 = `<b>🔢 ${symbol} FIBONACCI CYCLE CHECK</b>\n`;
+    msg1 += `<code>${formatters.formatTime(new Date())} | Daily</code>\n\n`;
+
+    msg1 += `<b>💰 Current Price:</b> ${formatters.formatCoinPrice(currentPrice, symbol)}\n\n`;
+
+    // ─────────────────────────────────────────────────────────────────
+    // ANALYZE HIGH → LOW MOVE
+    // ─────────────────────────────────────────────────────────────────
+    const isHighFirst = swingHigh.barsAgo > swingLow.barsAgo;
+    let downMove, upMove;
+
+    if (isHighFirst) {
+      // High came first, then Low - this is a DOWN move
+      downMove = {
+        from: swingHigh,
+        to: swingLow,
+        duration: swingHigh.barsAgo - swingLow.barsAgo
+      };
+    } else {
+      // Low came first, then High - measure from High to now for potential down
+      downMove = {
+        from: swingHigh,
+        to: { date: 'NOW', price: currentPrice, barsAgo: 0 },
+        duration: swingHigh.barsAgo
+      };
+    }
+
+    // ANALYZE LOW → HIGH MOVE
+    if (!isHighFirst) {
+      // Low came first, then High - this is an UP move
+      upMove = {
+        from: swingLow,
+        to: swingHigh,
+        duration: swingLow.barsAgo - swingHigh.barsAgo
+      };
+    } else {
+      // High came first - measure from Low to now for potential up
+      upMove = {
+        from: swingLow,
+        to: { date: 'NOW', price: currentPrice, barsAgo: 0 },
+        duration: swingLow.barsAgo
+      };
+    }
+
+    // Get Fib analysis for both moves
+    const downFib = findNearestFib(downMove.duration);
+    const downStatus = getCycleStatus(downMove.duration, downFib.nearest, downFib.absDiff);
+
+    const upFib = findNearestFib(upMove.duration);
+    const upStatus = getCycleStatus(upMove.duration, upFib.nearest, upFib.absDiff);
+
+    // ─────────────────────────────────────────────────────────────────
+    // SHOW DOWN MOVE ANALYSIS
+    // ─────────────────────────────────────────────────────────────────
+    msg1 += `<b>📉 DOWN MOVE (High → Low)</b>\n`;
+    msg1 += `From: ${formatters.formatCoinPrice(downMove.from.price, symbol)} (${downMove.from.date})\n`;
+    msg1 += `To: ${formatters.formatCoinPrice(downMove.to.price, symbol)} (${downMove.to.date})\n`;
+    msg1 += `Duration: <b>${downMove.duration} days</b>\n\n`;
+
+    msg1 += `${downStatus.emoji} Nearest Fib: <b>${downFib.nearest}</b>\n`;
+    msg1 += `   Difference: ${downFib.difference >= 0 ? '+' : ''}${downFib.difference} days\n`;
+    msg1 += `   Status: <b>${downStatus.status}</b>\n\n`;
+
+    // ─────────────────────────────────────────────────────────────────
+    // SHOW UP MOVE ANALYSIS
+    // ─────────────────────────────────────────────────────────────────
+    msg1 += `<b>📈 UP MOVE (Low → High)</b>\n`;
+    msg1 += `From: ${formatters.formatCoinPrice(upMove.from.price, symbol)} (${upMove.from.date})\n`;
+    msg1 += `To: ${formatters.formatCoinPrice(upMove.to.price, symbol)} (${upMove.to.date})\n`;
+    msg1 += `Duration: <b>${upMove.duration} days</b>\n\n`;
+
+    msg1 += `${upStatus.emoji} Nearest Fib: <b>${upFib.nearest}</b>\n`;
+    msg1 += `   Difference: ${upFib.difference >= 0 ? '+' : ''}${upFib.difference} days\n`;
+    msg1 += `   Status: <b>${upStatus.status}</b>\n`;
+
+    await bot.sendMessage(chatId, msg1, { parse_mode: 'HTML' });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 2: CYCLE COMPLETION ALERT
+    // ═══════════════════════════════════════════════════════════════
+    let msg2 = `<b>⏰ CYCLE COMPLETION ANALYSIS</b>\n\n`;
+
+    // Check if any cycle is completing
+    const alertMoves = [];
+    if (downStatus.alert) alertMoves.push({ type: 'DOWN', duration: downMove.duration, fib: downFib.nearest, status: downStatus });
+    if (upStatus.alert) alertMoves.push({ type: 'UP', duration: upMove.duration, fib: upFib.nearest, status: upStatus });
+
+    if (alertMoves.length > 0) {
+      msg2 += `🔴 <b>CYCLE COMPLETING!</b>\n\n`;
+
+      for (const alert of alertMoves) {
+        const arrow = alert.type === 'DOWN' ? '📉' : '📈';
+        msg2 += `${arrow} <b>${alert.type} move: ${alert.duration} days ≈ ${alert.fib} (Fib)</b>\n`;
+        msg2 += `   ${alert.status.status}\n\n`;
+      }
+
+      msg2 += `<b>What this means:</b>\n`;
+      msg2 += `The move has reached a Fibonacci cycle length.\n`;
+      msg2 += `Expect a REVERSAL or CONTINUATION IMPULSE.\n\n`;
+
+      msg2 += `<b>⚡ ACTION:</b>\n`;
+      msg2 += `• Watch for reversal candlestick patterns\n`;
+      msg2 += `• Check /gann for price-level confluence\n`;
+      msg2 += `• Tighten stops if in a position\n`;
+    } else {
+      msg2 += `⚪ <b>NO IMMEDIATE CYCLE COMPLETION</b>\n\n`;
+
+      // Show upcoming Fib targets
+      msg2 += `<b>📅 UPCOMING FIB DAYS:</b>\n\n`;
+
+      // Find next Fib for DOWN move
+      const nextDownFibs = FIB_NUMBERS.filter(f => f > downMove.duration).slice(0, 3);
+      if (nextDownFibs.length > 0) {
+        msg2 += `📉 Down move (${downMove.duration}d):\n`;
+        for (const f of nextDownFibs) {
+          const daysToGo = f - downMove.duration;
+          const targetDate = new Date();
+          targetDate.setDate(targetDate.getDate() + daysToGo);
+          const dateStr = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          msg2 += `   → <b>${f}</b> in ${daysToGo} days (${dateStr})\n`;
+        }
+        msg2 += `\n`;
+      }
+
+      // Find next Fib for UP move
+      const nextUpFibs = FIB_NUMBERS.filter(f => f > upMove.duration).slice(0, 3);
+      if (nextUpFibs.length > 0) {
+        msg2 += `📈 Up move (${upMove.duration}d):\n`;
+        for (const f of nextUpFibs) {
+          const daysToGo = f - upMove.duration;
+          const targetDate = new Date();
+          targetDate.setDate(targetDate.getDate() + daysToGo);
+          const dateStr = targetDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          msg2 += `   → <b>${f}</b> in ${daysToGo} days (${dateStr})\n`;
+        }
+      }
+    }
+
+    await bot.sendMessage(chatId, msg2, { parse_mode: 'HTML' });
+
+    // ═══════════════════════════════════════════════════════════════
+    // MESSAGE 3: FIBONACCI REFERENCE
+    // ═══════════════════════════════════════════════════════════════
+    let msg3 = `<b>📚 FIBONACCI CYCLE NUMBERS</b>\n\n`;
+
+    msg3 += `<code>`;
+    msg3 += `  1   2   3   5   8\n`;
+    msg3 += ` 13  21  34  55  89\n`;
+    msg3 += `144 233 377 610 987\n`;
+    msg3 += `</code>\n\n`;
+
+    msg3 += `<b>Why these numbers?</b>\n`;
+    msg3 += `Each number is the sum of the two before it.\n`;
+    msg3 += `Nature uses this sequence everywhere:\n`;
+    msg3 += `• Sunflower seeds • Pinecones • Galaxies\n\n`;
+
+    msg3 += `<b>In Markets:</b>\n`;
+    msg3 += `• <b>8, 13, 21</b> - Short cycles (scalping)\n`;
+    msg3 += `• <b>34, 55, 89</b> - Medium cycles (swing)\n`;
+    msg3 += `• <b>144, 233</b> - Major cycles (position)\n\n`;
+
+    msg3 += `<b>Gann's Rule:</b>\n`;
+    msg3 += `<i>"When TIME equals a Fibonacci number, watch for\n`;
+    msg3 += `a change in trend. The market remembers these\n`;
+    msg3 += `sacred numbers."</i>\n\n`;
+
+    msg3 += `<code>─────────────────────</code>\n`;
+    msg3 += `<i>/time ${symbol} 1D for time ratio projections</i>`;
+
+    await bot.sendMessage(chatId, msg3, { parse_mode: 'HTML' });
+
+  } catch (error) {
+    logger.error('Fibox command error', { error: error.message, symbol, chatId });
+
+    try { await bot.deleteMessage(chatId, loadingMsg.message_id); } catch (e) {}
+
+    let errorMsg = `⚠️ Fibonacci cycle check failed for ${symbol}.\n\n`;
+    errorMsg += `Error: ${error.message}\n\n`;
+    errorMsg += `<i>Make sure the symbol exists on Bybit</i>`;
+
+    await bot.sendMessage(chatId, errorMsg, { parse_mode: 'HTML' });
+  }
+}
+
+/**
  * Handle /model command - Show current model
  */
 async function handleModel(bot, msg) {
@@ -1659,6 +1952,7 @@ const commands = {
   status: handleStatus,
   gann: handleGann,
   time: handleTime,
+  fibox: handleFibox,
   planets: handlePlanets,
   confluence: handleConfluence,
   levels: handleLevels,
@@ -1677,7 +1971,7 @@ const commands = {
  */
 function registerCommands(bot) {
   // Commands that take parameters
-  const paramCommands = ['coin', 'gann', 'time'];
+  const paramCommands = ['coin', 'gann', 'time', 'fibox'];
 
   // Register each command
   Object.entries(commands).forEach(([command, handler]) => {
@@ -1725,6 +2019,7 @@ module.exports = {
   handleGann,
   handleGannModel2,
   handleTime,
+  handleFibox,
   handlePlanets,
   handleConfluence,
   handleLevels,

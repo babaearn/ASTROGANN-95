@@ -498,6 +498,8 @@ function formatHelp() {
   <i>Example: /gann XRP 1D, /gann BTC 4H</i>
 /time [COIN] [MODE] - Time ratio analysis
   <i>Example: /time BTC 0, /time ETH 1D</i>
+/fibox [COIN] - Fibonacci cycle checker
+  <i>Is the move at a Fib number? (144, 89, 55...)</i>
 /coin [SYMBOL] - Simplified coin analysis
 /scan - Scan ALL tickers for reversals
 /status - Current BTC + system status
